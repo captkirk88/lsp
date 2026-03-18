@@ -51,8 +51,8 @@ fn void encode_semantic_tokens(String content, DString* out) {
 
 	while (true) {
 		if (try tok = lex.next()) {
-			int token_type = map_token_type(tok.type);
-			if (token_type < 0) continue;
+			SemanticCategory category = map_token_type(tok.type);
+			if (category == SKIP) continue;
 
 			usz tok_start = tok.offset;
 			usz tok_end = tok.offset + tok.len;
@@ -66,7 +66,7 @@ fn void encode_semantic_tokens(String content, DString* out) {
 				usz delta_start_char = delta_line == 0 ? start_char - prev_start_char : start_char;
 
 				if (!first) out.append_char(',');
-				out.appendf("%d,%d,%d,%d,0", delta_line, delta_start_char, tok.len, token_type);
+				out.appendf("%d,%d,%d,%d,0", delta_line, delta_start_char, tok.len, category.index);
 				first = false;
 
 				prev_line = start_line;
@@ -105,7 +105,7 @@ fn void encode_semantic_tokens(String content, DString* out) {
 					usz delta_start_char = delta_line == 0 ? seg_char - prev_start_char : seg_char;
 
 					if (!first) out.append_char(',');
-					out.appendf("%d,%d,%d,%d,0", delta_line, delta_start_char, seg_len, token_type);
+					out.appendf("%d,%d,%d,%d,0", delta_line, delta_start_char, seg_len, category.index);
 					first = false;
 
 					prev_line = ln;

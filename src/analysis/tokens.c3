@@ -23,85 +23,38 @@ enum SemanticCategory : inline char (int index) {
 }
 
 // Maps a TokenType to its semantic token category index.
-fn int map_token_type(TokenType t) {
+// Only emits tokens where the LSP adds value over the TextMate grammar.
+// Keywords, operators, comments, strings, numbers, and builtin types are
+// left to TextMate which has more nuanced scoping for these.
+fn SemanticCategory map_token_type(TokenType t) {
 	switch (t) {
-		case MODULE: return SemanticCategory.NAMESPACE.index;
+		// Identifiers — LSP adds value by confirming token kind from lexer
 		case TYPE_IDENT:
-		case AT_TYPE_IDENT:
-		case HASH_TYPE_IDENT:
 		case CT_TYPE_IDENT:
-		case VOID: case BOOL: case CHAR: case ICHAR:
-		case SHORT: case USHORT: case INT: case UINT:
-		case LONG: case ULONG: case INT128: case UINT128:
-		case FLOAT: case DOUBLE: case FLOAT16: case BFLOAT16: case FLOAT128:
-		case IPTR: case UPTR: case ISZ: case USZ:
-		case FAULT: case ANY: case TYPEID:
-			return SemanticCategory.TYPE.index;
-		case ENUM: case FAULTDEF: case BITSTRUCT:
-			return SemanticCategory.ENUM_CAT.index;
-		case STRUCT: case UNION:
-			return SemanticCategory.STRUCT_CAT.index;
-		case IDENT: case CONST_IDENT:
-			return SemanticCategory.VARIABLE.index;
-		case FUNC:
-			return SemanticCategory.FUNCTION.index;
-		case MACRO:
-		case BUILTIN:
-		case CT_ALIGNOF: case CT_ASSERT: case CT_ASSIGNABLE:
-		case CT_CASE: case CT_DEFAULT: case CT_DEFINED:
-		case CT_ECHO: case CT_ELSE: case CT_ENDFOR:
-		case CT_ENDFOREACH: case CT_ENDIF: case CT_ENDSWITCH:
-		case CT_ERROR: case CT_EVAL: case CT_EVALTYPE:
-		case CT_EXEC: case CT_EXTNAMEOF: case CT_FEATURE:
-		case CT_FOR: case CT_FOREACH: case CT_IF:
-		case CT_IS_CONST: case CT_INCLUDE: case CT_KINDOF:
-		case CT_NAMEOF: case CT_OFFSETOF: case CT_QNAMEOF:
-		case CT_SIZEOF: case CT_STRINGIFY: case CT_SWITCH:
-		case CT_TYPEFROM: case CT_TYPEOF:
-		case CT_VAARG: case CT_VACONST: case CT_VACOUNT:
-		case CT_VAEXPR: case CT_VAREF: case CT_VATYPE: case CT_VASPLAT:
-		case CT_IDENT: case CT_CONST_IDENT:
-			return SemanticCategory.MACRO_CAT.index;
-		case ALIAS: case ASM: case ASSERT: case ATTRDEF:
-		case CONST: case CONSTDEF:
-		case IMPORT: case INTERFACE: case TYPEDEF:
-		case BREAK: case CASE: case CATCH: case CONTINUE:
-		case DEFAULT: case DEFER: case DO: case ELSE:
-		case EXTERN: case FALSE: case FOR: case FOREACH: case FOREACH_R:
-		case IF: case INLINE: case LENGTHOF: case NEXTCASE:
-		case NULL: case RETURN: case STATIC: case SWITCH:
-		case TLOCAL: case TRUE: case TRY: case VAR: case WHILE:
-			return SemanticCategory.KEYWORD.index;
+			return TYPE;
+		case CONST_IDENT:
+		case CT_CONST_IDENT:
+			return VARIABLE;
+		case IDENT:
+			return VARIABLE;
+		case CT_IDENT:
+			return MACRO_CAT;
+
+		// Decorators — @attributes
 		case AT_INLINE: case AT_PURE: case AT_NOINLINE:
-		case AT_IDENT: case AT_CONST_IDENT:
-		case HASH_IDENT: case HASH_CONST_IDENT:
-			return SemanticCategory.DECORATOR.index;
-		case LINE_COMMENT: case BLOCK_COMMENT: case CONTRACT:
-			return SemanticCategory.COMMENT.index;
-		case STRING: case CHAR_LITERAL: case BYTES:
-			return SemanticCategory.STRING_CAT.index;
-		case INTEGER: case REAL:
-			return SemanticCategory.NUMBER.index;
-		case AMP: case BIT_OR: case BIT_XOR: case BIT_NOT: case BANG:
-		case PLUS: case MINUS: case STAR: case DIV: case MOD:
-		case QUESTION: case QUESTQUEST: case ELVIS: case BANGBANG:
-		case SHR_OP: case SHL_OP: case PLUSPLUS: case MINUSMINUS:
-		case CT_CONCAT_OP: case CT_TERNARY:
-		case EQ: case SHR_ASSIGN: case SHL_ASSIGN: case PLUS_ASSIGN:
-		case MINUS_ASSIGN: case MULT_ASSIGN: case DIV_ASSIGN:
-		case MOD_ASSIGN: case BIT_AND_ASSIGN: case BIT_XOR_ASSIGN:
-		case BIT_OR_ASSIGN: case CT_CONCAT_ASSIGN:
-		case LESS: case GREATER: case AND: case OR:
-		case LESS_EQ: case GREATER_EQ: case EQEQ: case NOT_EQUAL:
-		case CT_AND_OP: case CT_OR_OP:
-		case EOS: case COLON: case SCOPE: case COMMA: case DOT:
-		case DOTDOT: case ELLIPSIS:
-		case LBRACE: case RBRACE: case LBRACKET: case RBRACKET:
-		case LPAREN: case RPAREN: case ARROW: case IMPLIES:
-		case LVEC: case RVEC:
-			return SemanticCategory.OPERATOR.index;
+		case AT_IDENT:
+			return DECORATOR;
+
+		// Everything else: skip and let TextMate grammar handle it.
+		// TextMate provides more nuanced scoping for:
+		//   - Keywords: keyword.declaration.* vs keyword.control vs storage.modifier
+		//   - Builtin types: storage.type.built-in.primitive
+		//   - Literals: constant.language (true/false/null), constant.numeric
+		//   - Comments: comment.line vs comment.block vs comment.block.documentation
+		//   - Strings: string.quoted.double vs string.quoted.single vs string.quoted.other
+		//   - Operators: keyword.operator.* with specific sub-scopes
 		default:
-			return SemanticCategory.SKIP.index;
+			return SKIP;
 	}
 }
 

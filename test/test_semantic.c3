@@ -5,81 +5,82 @@ import std::core::mem;
 import c3::lexer;
 
 // -- map_token_type --
+// The LSP only emits semantic tokens for identifiers and decorators.
+// Keywords, operators, comments, strings, numbers, and builtin types
+// are skipped (-1) to let the TextMate grammar handle them.
 
 fn void test_map_keywords() @test {
-	assert(map_token_type(MODULE) == 0);   // namespace
-	assert(map_token_type(FUNC) == 5);     // function
-	assert(map_token_type(MACRO) == 6);    // macro
-	assert(map_token_type(IF) == 7);       // keyword
-	assert(map_token_type(RETURN) == 7);
-	assert(map_token_type(WHILE) == 7);
+	// Keywords are skipped — TextMate handles nuanced keyword scoping
+	assert(map_token_type(MODULE) == SKIP);
+	assert(map_token_type(FUNC) == SKIP);
+	assert(map_token_type(MACRO) == SKIP);
+	assert(map_token_type(IF) == SKIP);
+	assert(map_token_type(RETURN) == SKIP);
+	assert(map_token_type(WHILE) == SKIP);
+	assert(map_token_type(STRUCT) == SKIP);
+	assert(map_token_type(ENUM) == SKIP);
 }
 
 fn void test_map_types() @test {
-	assert(map_token_type(TYPE_IDENT) == 1);
-	assert(map_token_type(VOID) == 1);
-	assert(map_token_type(INT) == 1);
-	assert(map_token_type(BOOL) == 1);
-	assert(map_token_type(DOUBLE) == 1);
-	assert(map_token_type(USZ) == 1);
-	assert(map_token_type(TYPEID) == 1);
-}
-
-fn void test_map_definitions() @test {
-	assert(map_token_type(ENUM) == 2);      // enum
-	assert(map_token_type(FAULTDEF) == 2);
-	assert(map_token_type(BITSTRUCT) == 2);
-	assert(map_token_type(STRUCT) == 3);    // struct
-	assert(map_token_type(UNION) == 3);
+	// User type identifiers are emitted as TYPE
+	assert(map_token_type(TYPE_IDENT) == SemanticCategory.TYPE);
+	assert(map_token_type(CT_TYPE_IDENT) == SemanticCategory.TYPE);
+	// Builtin types are skipped — TextMate handles as storage.type.built-in
+	assert(map_token_type(VOID) == SKIP);
+	assert(map_token_type(INT) == SKIP);
+	assert(map_token_type(BOOL) == SKIP);
+	assert(map_token_type(USZ) == SKIP);
 }
 
 fn void test_map_identifiers() @test {
-	assert(map_token_type(IDENT) == 4);       // variable
-	assert(map_token_type(CONST_IDENT) == 4);
+	assert(map_token_type(IDENT) == VARIABLE);
+	assert(map_token_type(CONST_IDENT) == VARIABLE);
+	assert(map_token_type(CT_IDENT) == MACRO_CAT);
 }
 
 fn void test_map_literals() @test {
-	assert(map_token_type(STRING) == 10);
-	assert(map_token_type(CHAR_LITERAL) == 10);
-	assert(map_token_type(BYTES) == 10);
-	assert(map_token_type(INTEGER) == 11);
-	assert(map_token_type(REAL) == 11);
+	// Skipped — TextMate handles string/number coloring
+	assert(map_token_type(STRING) == SKIP);
+	assert(map_token_type(CHAR_LITERAL) == SKIP);
+	assert(map_token_type(INTEGER) == SKIP);
+	assert(map_token_type(REAL) == SKIP);
 }
 
 fn void test_map_comments() @test {
-	assert(map_token_type(LINE_COMMENT) == 9);
-	assert(map_token_type(BLOCK_COMMENT) == 9);
-	assert(map_token_type(CONTRACT) == 9);
+	// Skipped — TextMate handles comment coloring
+	assert(map_token_type(LINE_COMMENT) == SKIP);
+	assert(map_token_type(BLOCK_COMMENT) == SKIP);
+	assert(map_token_type(CONTRACT) == SKIP);
 }
 
 fn void test_map_decorators() @test {
-	assert(map_token_type(AT_INLINE) == 8);
-	assert(map_token_type(AT_PURE) == 8);
-	assert(map_token_type(AT_NOINLINE) == 8);
-	assert(map_token_type(AT_IDENT) == 8);
+	assert(map_token_type(AT_INLINE) == DECORATOR);
+	assert(map_token_type(AT_PURE) == DECORATOR);
+	assert(map_token_type(AT_NOINLINE) == DECORATOR);
+	assert(map_token_type(AT_IDENT) == DECORATOR);
 }
 
 fn void test_map_operators() @test {
-	assert(map_token_type(PLUS) == 12);
-	assert(map_token_type(MINUS) == 12);
-	assert(map_token_type(EQ) == 12);
-	assert(map_token_type(LBRACE) == 12);
-	assert(map_token_type(RPAREN) == 12);
-	assert(map_token_type(EOS) == 12);
+	// Skipped — TextMate handles operator coloring
+	assert(map_token_type(PLUS) == SKIP);
+	assert(map_token_type(MINUS) == SKIP);
+	assert(map_token_type(EQ) == SKIP);
+	assert(map_token_type(LBRACE) == SKIP);
 }
 
 fn void test_map_ct_keywords() @test {
-	assert(map_token_type(CT_IF) == 6);       // macro
-	assert(map_token_type(CT_ENDIF) == 6);
-	assert(map_token_type(CT_SIZEOF) == 6);
-	assert(map_token_type(BUILTIN) == 6);
-	assert(map_token_type(CT_IDENT) == 6);
+	// CT keywords are skipped — TextMate handles them
+	assert(map_token_type(CT_IF) == SKIP);
+	assert(map_token_type(CT_SIZEOF) == SKIP);
+	assert(map_token_type(BUILTIN) == SKIP);
+	// CT identifiers are emitted as macro
+	assert(map_token_type(CT_IDENT) == MACRO_CAT);
 }
 
 fn void test_map_skip_tokens() @test {
-	assert(map_token_type(EOF) == -1);
-	assert(map_token_type(EOL) == -1);
-	assert(map_token_type(INVALID) == -1);
+	assert(map_token_type(EOF) == SKIP);
+	assert(map_token_type(EOL) == SKIP);
+	assert(map_token_type(INVALID) == SKIP);
 }
 
 // -- build_line_offsets / find_line --
@@ -136,63 +137,56 @@ fn void test_encode_empty() @test {
 
 fn void test_encode_single_keyword() @test {
 	DString out = dstring::temp();
-	// "fn" is FUNC → type 5, at line 0, col 0, len 2
+	// "fn" is FUNC — skipped (TextMate handles keywords)
 	encode_semantic_tokens("fn", &out);
-	assert(out.str_view() == "0,0,2,5,0");
+	assert(out.str_view() == "", "Keywords should be skipped, got: %s", out.str_view());
 }
 
 fn void test_encode_two_tokens_same_line() @test {
 	DString out = dstring::temp();
-	// "fn x" → FUNC(0,0,2,5,0) IDENT(0,3,1,4,0)
+	// "fn x" → FUNC skipped, IDENT "x" at col 3, len 1, type 4
 	encode_semantic_tokens("fn x", &out);
-	assert(out.str_view() == "0,0,2,5,0,0,3,1,4,0");
+	assert(out.str_view() == "0,3,1,4,0", "got: %s", out.str_view());
 }
 
 fn void test_encode_multiline() @test {
 	DString out = dstring::temp();
-	// "fn\nx" → FUNC at (0,0) then IDENT at (1,0)
-	// FUNC: deltaLine=0, deltaStart=0, len=2, type=5
-	// IDENT: deltaLine=1, deltaStart=0, len=1, type=4
+	// "fn\nx" → FUNC skipped, IDENT at line 1 col 0
 	encode_semantic_tokens("fn\nx", &out);
-	assert(out.str_view() == "0,0,2,5,0,1,0,1,4,0");
+	assert(out.str_view() == "1,0,1,4,0", "got: %s", out.str_view());
 }
 
 fn void test_encode_comment() @test {
 	DString out = dstring::temp();
+	// Comments are skipped — TextMate handles them
 	encode_semantic_tokens("// hello", &out);
-	// LINE_COMMENT → type 9, at (0,0), len 8
-	assert(out.str_view() == "0,0,8,9,0");
+	assert(out.str_view() == "", "Comments should be skipped, got: %s", out.str_view());
 }
 
 fn void test_encode_string_literal() @test {
 	DString out = dstring::temp();
+	// Strings are skipped — TextMate handles them
 	encode_semantic_tokens(`"hello"`, &out);
-	// STRING → type 10, at (0,0), len 7
-	assert(out.str_view() == "0,0,7,10,0");
+	assert(out.str_view() == "", "Strings should be skipped, got: %s", out.str_view());
 }
 
 fn void test_encode_number() @test {
 	DString out = dstring::temp();
+	// Numbers are skipped — TextMate handles them
 	encode_semantic_tokens("42", &out);
-	// INTEGER → type 11, at (0,0), len 2
-	assert(out.str_view() == "0,0,2,11,0");
+	assert(out.str_view() == "", "Numbers should be skipped, got: %s", out.str_view());
 }
 
 fn void test_encode_multiline_block_comment() @test {
 	DString out = dstring::temp();
-	// "/* a\nb */" is a 3-line block comment split across line 0 and line 1
-	// Line 0: "/* a" (4 chars), Line 1: "b */" (4 chars)
-	// Both segments are type 9 (comment)
-	// Seg1: deltaLine=0, deltaStart=0, len=4, type=9
-	// Seg2: deltaLine=1, deltaStart=0, len=4, type=9
+	// Block comments are skipped — TextMate handles them
 	encode_semantic_tokens("/* a\nb */", &out);
-	assert(out.str_view() == "0,0,4,9,0,1,0,4,9,0", "got: %s", out.str_view());
+	assert(out.str_view() == "", "Block comments should be skipped, got: %s", out.str_view());
 }
 
 fn void test_encode_multiline_string() @test {
 	DString out = dstring::temp();
-	// Backtick string spanning two lines: `a\nb`
-	// Line 0: "`a" (2 chars), Line 1: "b`" (2 chars)
+	// Multi-line strings are skipped — TextMate handles them
 	encode_semantic_tokens("`a\nb`", &out);
-	assert(out.str_view() == "0,0,2,10,0,1,0,2,10,0", "got: %s", out.str_view());
+	assert(out.str_view() == "", "Strings should be skipped, got: %s", out.str_view());
 }

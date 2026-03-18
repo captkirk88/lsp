@@ -52,6 +52,7 @@ fn void handle_initialize(LspServer* server, Object* msg, String id_json)
 	result.append(`"declarationProvider":true,`);
 	result.append(`"documentHighlightProvider":true,`);
 	result.append(`"referencesProvider":true,`);
+	result.append(`"renameProvider":true,`);
 	result.append(`"signatureHelpProvider":{"triggerCharacters":["(",","]}`);
 	result.append(`},`);
 	result.append(`"serverInfo":{"name":"c3-lsp","version":"0.1.0"}}`);
@@ -412,6 +413,52 @@ fn void handle_references(LspServer* server, Object* msg, String id_json)
 
 	DString data = dstring::temp();
 	encode_references(uri, doc.content, offset, &server.documents, server.stdlib_path, include_decl, &data);
+
+	if (data.str_view().len == 0)
+	{
+		send_response(id_json, "null");
+	}
+	else
+	{
+		send_response(id_json, data.str_view());
+	}
+}
+
+fn void handle_rename(LspServer* server, Object* msg, String id_json)
+{
+	Object* td = msg.get("params")!!.get("textDocument")!!;
+	String uri = td.get_string("uri") ?? "";
+
+	Document* doc = server.documents.find(uri);
+	if (doc == null)
+	{
+		send_response(id_json, "null");
+		return;
+	}
+
+	Object* pos = msg.get("params")!!.get("position")!!;
+	int line = pos.get_int("line") ?? 0;
+	int character = pos.get_int("character") ?? 0;
+
+	String new_name = msg.get("params")!!.get_string("newName") ?? "";
+	if (new_name.len == 0)
+	{
+		send_error(id_json, -32602, "newName is required");
+		return;
+	}
+
+	LineOffsets* lo = mem::new(LineOffsets);
+	defer mem::free(lo);
+	build_line_offsets(doc.content, lo);
+
+	usz offset = 0;
+	if ((usz)line < lo.count)
+	{
+		offset = lo.offsets[(usz)line] + (usz)character;
+	}
+
+	DString data = dstring::temp();
+	encode_rename(uri, doc.content, offset, &server.documents, server.stdlib_path, new_name, &data);
 
 	if (data.str_view().len == 0)
 	{

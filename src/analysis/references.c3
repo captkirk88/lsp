@@ -130,6 +130,262 @@ fn void collect_refs_in_tokens(String uri, String content, Token[] tokens, usz c
 	}
 }
 
+// Encode rename (cross-file symbol rename).
+// Output: JSON WorkspaceEdit object, or empty string if none.
+fn void encode_rename(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, String new_name, DString* out)
+{
+	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
+	defer mem::free(tokens);
+	usz token_count = tokenize_content(content, tokens);
+
+	Token cursor_tok;
+	usz cursor_idx;
+	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx)) return;
+
+	TokenType ct = cursor_tok.type;
+	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;
+
+	bool first_uri = true;
+	out.append(`{"changes":{`);
+
+	// 1. Current file
+	collect_rename_edits(uri, content, tokens, token_count, cursor_tok, new_name, out, &first_uri);
+
+	// 2. Open documents
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (docs.entries[d].uri == uri) continue;
+
+		Token[] other_tokens = mem::new_array(Token, DEF_MAX_TOKENS);
+		usz other_count = tokenize_content(docs.entries[d].content, other_tokens);
+		collect_rename_edits(docs.entries[d].uri, docs.entries[d].content, other_tokens, other_count, cursor_tok, new_name, out, &first_uri);
+		mem::free(other_tokens);
+	}
+
+	// 3. Scan project files on disk (skip stdlib — should not rename stdlib symbols)
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		scan_project_files_rename(file_path, cursor_tok, new_name, out, &first_uri);
+	}
+
+	out.append(`}}`);
+
+	if (first_uri)
+	{
+		out.clear();
+	}
+}
+
+// Collect rename edits for matching tokens in a single file, emitting a URI-keyed TextEdit array.
+fn void collect_rename_edits(String uri, String content, Token[] tokens, usz count, Token target, String new_name, DString* out, bool* first_uri) @private
+{
+	LineOffsets* lo = mem::new(LineOffsets);
+	defer mem::free(lo);
+	build_line_offsets(content, lo);
+
+	bool found_any = false;
+	bool first_edit = true;
+
+	for (usz i = 0; i < count; i++)
+	{
+		if (tokens[i].type == target.type && tokens[i].text == target.text)
+		{
+			if (!found_any)
+			{
+				if (!*first_uri) out.append(",");
+				out.append(`"`);
+				json_escape_into(out, uri);
+				out.append(`":[`);
+				found_any = true;
+			}
+
+			if (!first_edit) out.append(",");
+			first_edit = false;
+
+			usz line = find_line(lo, tokens[i].offset);
+			usz col = tokens[i].offset - lo.offsets[line];
+			usz end_col = col + tokens[i].len;
+
+			out.appendf(`{"range":{"start":{"line":%d,"character":%d},"end":{"line":%d,"character":%d}},"newText":"`, line, col, line, end_col);
+			json_escape_into(out, new_name);
+			out.append(`"}`);
+		}
+	}
+
+	if (found_any)
+	{
+		out.append("]");
+		*first_uri = false;
+	}
+}
+
+// Scan project directories for rename edits on disk.
+fn void scan_project_files_rename(String file_path, Token target, String new_name, DString* out, bool* first_uri) @private
+{
+	String dir = parent_dir(file_path);
+	String project_root = "";
+	String check_dir = dir;
+	char[]? project_json_data;
+	for (int depth = 0; depth < 10; depth++)
+	{
+		if (check_dir.len == 0 || check_dir == "/") break;
+		DString pj = dstring::temp();
+		pj.appendf("%s/project.json", check_dir);
+		if (try data = file::load(mem, pj.str_view()))
+		{
+			project_root = check_dir;
+			project_json_data = data;
+			break;
+		}
+		check_dir = parent_dir(check_dir);
+	}
+
+	if (project_root.len == 0) return;
+
+	const int MAX_SEARCH_DIRS = 32;
+	String[MAX_SEARCH_DIRS] search_dirs;
+	usz search_count = 0;
+
+	if (try data = project_json_data)
+	{
+		defer mem::free(data);
+		if (try pjson = json::tparse_string((String)data))
+		{
+			if (try deps = pjson.get("dependency-search-paths"))
+			{
+				usz deps_len = deps.get_len();
+				for (usz i = 0; i < deps_len && search_count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = deps.get_at(i);
+					if (item == null) break;
+					if (item.is_string())
+					{
+						search_dirs[search_count++] = item.s;
+					}
+				}
+			}
+
+			if (try srcs = pjson.get("sources"))
+			{
+				usz srcs_len = srcs.get_len();
+				for (usz i = 0; i < srcs_len && search_count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = srcs.get_at(i);
+					if (item == null) break;
+					if (item.is_string())
+					{
+						String src = item.s;
+						usz dir_end = src.len;
+						for (usz j = 0; j < src.len; j++)
+						{
+							if (src[j] == '*')
+							{
+								dir_end = j;
+								break;
+							}
+						}
+						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
+						if (dir_end > 0)
+						{
+							String src_dir = src[:dir_end];
+							bool dup = false;
+							for (usz k = 0; k < search_count; k++)
+							{
+								if (search_dirs[k] == src_dir)
+								{
+									dup = true;
+									break;
+								}
+							}
+							if (!dup)
+							{
+								search_dirs[search_count++] = src_dir;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (search_count == 0)
+	{
+		search_dirs[0] = "src";
+		search_dirs[1] = "lib";
+		search_count = 2;
+	}
+
+	for (usz i = 0; i < search_count; i++)
+	{
+		DString search_path = dstring::temp();
+		search_path.appendf("%s/%s", project_root, search_dirs[i]);
+		scan_dir_recursive_rename(search_path.str_view(), target, new_name, out, first_uri, 0);
+	}
+}
+
+// Recursively scan directories for rename edits.
+fn void scan_dir_recursive_rename(String dir_path, Token target, String new_name, DString* out, bool* first_uri, int depth) @private
+{
+	if (depth > MAX_SCAN_DEPTH) return;
+
+	Path p;
+	if (try pp = path::temp(dir_path))
+	{
+		p = pp;
+	}
+	else
+	{
+		return;
+	}
+	PathList entries;
+	if (try el = path::ls(mem, p))
+	{
+		entries = el;
+	}
+	else
+	{
+		return;
+	}
+	defer
+	{
+		foreach (&e : entries) e.free();
+		entries.free();
+	}
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				String content = (String)file_content;
+				Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
+				usz count = tokenize_content(content, tokens);
+
+				DString uri = dstring::temp();
+				uri.appendf("file://%s", full_path);
+				collect_rename_edits(uri.str_view(), content, tokens, count, target, new_name, out, first_uri);
+
+				mem::free(tokens);
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			scan_dir_recursive_rename(full_path, target, new_name, out, first_uri, depth + 1);
+		}
+	}
+}
+
 // Scan project directories for all references on disk.
 fn void scan_project_files_refs(String file_path, Token target, DString* out, bool* first) @private
 {

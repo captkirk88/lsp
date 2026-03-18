@@ -157,3 +157,86 @@ fn void test_references_type_ident() @test {
 
 	ds.close("file:///other.c3");
 }
+
+// --- Rename tests ---
+
+fn void test_rename_same_file() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	String content = "fn void hello() {}\nhello();\nhello();";
+	// Cursor on "hello" at offset 8
+	encode_rename("file:///test.c3", content, 8, ds, "", "world", &out);
+	String result = out.str_view();
+	assert(result.contains(`"changes"`), "expected changes, got: %s", result);
+	assert(result.contains(`"newText":"world"`), "expected newText, got: %s", result);
+	// Should have 3 edits (decl + 2 calls)
+	int count = 0;
+	usz pos = 0;
+	while (pos < result.len) {
+		if (try found = result[pos..].index_of(`"newText"`)) {
+			count++;
+			pos = pos + found + 1;
+		} else {
+			break;
+		}
+	}
+	assert(count == 3, "expected 3 edits, got %d: %s", count, result);
+}
+
+fn void test_rename_cross_file() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	ds.open("file:///other.c3", "fn void greet() { hello(); }", 1);
+
+	String content = "fn void hello() {}\nhello();";
+	// Cursor on "hello" at offset 8
+	encode_rename("file:///test.c3", content, 8, ds, "", "goodbye", &out);
+	String result = out.str_view();
+	assert(result.contains(`file:///test.c3`), "got: %s", result);
+	assert(result.contains(`file:///other.c3`), "got: %s", result);
+	assert(result.contains(`"newText":"goodbye"`), "got: %s", result);
+
+	ds.close("file:///other.c3");
+}
+
+fn void test_rename_keyword_empty() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	// Cursor on "fn" keyword at offset 0
+	encode_rename("file:///test.c3", "fn void hello() {}", 0, ds, "", "xyz", &out);
+	assert(out.str_view() == "", "expected empty for keyword, got: %s", out.str_view());
+}
+
+fn void test_rename_type_ident() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	ds.open("file:///other.c3", "Foo y;", 1);
+
+	String content = "struct Foo {}\nFoo x;";
+	// Cursor on "Foo" at offset 7
+	encode_rename("file:///test.c3", content, 7, ds, "", "Bar", &out);
+	String result = out.str_view();
+	assert(result.contains(`file:///test.c3`), "got: %s", result);
+	assert(result.contains(`file:///other.c3`), "got: %s", result);
+	assert(result.contains(`"newText":"Bar"`), "got: %s", result);
+
+	ds.close("file:///other.c3");
+}
+
+fn void test_rename_correct_ranges() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	// "foo" starts at char 8, length 3
+	String content = "fn void foo() { foo(); }";
+	encode_rename("file:///test.c3", content, 8, ds, "", "baz", &out);
+	String result = out.str_view();
+	// First foo: char 8-11
+	assert(result.contains(`"start":{"line":0,"character":8},"end":{"line":0,"character":11}`), "got: %s", result);
+	// Second foo: char 16-19
+	assert(result.contains(`"start":{"line":0,"character":16},"end":{"line":0,"character":19}`), "got: %s", result);
+}

@@ -20,6 +20,7 @@ struct LspServer
 fn void LspServer.init(&self, String stdlib_path, String compiler_path, long diag_delay_ms)
 {
 	*self = { .running = true, .stdlib_path = stdlib_path, .compiler_path = compiler_path, .diag_delay_ms = diag_delay_ms, };
+	self.documents.init(mem);
 }
 
 fn void handle_message(LspServer* server, String message)
@@ -122,6 +123,10 @@ fn void handle_message(LspServer* server, String message)
 	else if (method == "textDocument/signatureHelp")
 	{
 		handle_signature_help(server, msg, id_json);
+	}
+	else if (method == "textDocument/rename")
+	{
+		handle_rename(server, msg, id_json);
 	}
 	else if (id_json != "null")
 	{

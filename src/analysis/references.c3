@@ -140,7 +140,10 @@ fn void encode_rename(String uri, String content, usz offset, DocumentList* docs
 
 	Token cursor_tok;
 	usz cursor_idx;
-	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx)) return;
+	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx))
+	{
+		return;
+	}
 
 	TokenType ct = cursor_tok.type;
 	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;

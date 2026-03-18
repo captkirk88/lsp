@@ -34,6 +34,8 @@ fn usz tokenize_content(String content, Token[] tokens)
 }
 
 // Find the token at a byte offset in a token stream.
+// If the offset lands between tokens (e.g. cursor at end of word),
+// also checks offset-1 to match the preceding token.
 fn bool find_token_at(Token[] tokens, usz count, usz offset, Token* result, usz* idx)
 {
 	for (usz i = 0; i < count; i++)
@@ -44,6 +46,21 @@ fn bool find_token_at(Token[] tokens, usz count, usz offset, Token* result, usz*
 			*result = tokens[i];
 			*idx = i;
 			return true;
+		}
+	}
+	// Retry with offset-1: cursor may be right after the token end
+	if (offset > 0)
+	{
+		usz adj = offset - 1;
+		for (usz i = 0; i < count; i++)
+		{
+			usz tok_end = tokens[i].offset + tokens[i].len;
+			if (tokens[i].offset <= adj && adj < tok_end)
+			{
+				*result = tokens[i];
+				*idx = i;
+				return true;
+			}
 		}
 	}
 	return false;

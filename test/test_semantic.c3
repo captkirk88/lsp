@@ -34,7 +34,7 @@ fn void test_map_types() @test {
 
 fn void test_map_identifiers() @test {
 	assert(map_token_type(IDENT) == VARIABLE);
-	assert(map_token_type(CONST_IDENT) == VARIABLE);
+	assert(map_token_type(CONST_IDENT) == ENUM_MEMBER);
 	assert(map_token_type(CT_IDENT) == MACRO_CAT);
 }
 
@@ -189,4 +189,67 @@ fn void test_encode_multiline_string() @test {
 	// Multi-line strings are skipped — TextMate handles them
 	encode_semantic_tokens("`a\nb`", &out);
 	assert(out.str_view() == "", "Strings should be skipped, got: %s", out.str_view());
+}
+
+fn void test_encode_function_call() @test {
+	DString out = dstring::temp();
+	// "x()" → IDENT "x" followed by LPAREN → FUNCTION (index 5)
+	encode_semantic_tokens("x()", &out);
+	assert(out.str_view() == "0,0,1,5,0", "Function call should be detected, got: %s", out.str_view());
+}
+
+fn void test_encode_variable_not_function() @test {
+	DString out = dstring::temp();
+	// "fn x" → IDENT "x" not followed by LPAREN → VARIABLE (index 4)
+	encode_semantic_tokens("fn x", &out);
+	assert(out.str_view() == "0,3,1,4,0", "Variable should stay variable, got: %s", out.str_view());
+}
+
+fn void test_encode_variable_assignment() @test {
+	DString out = dstring::temp();
+	// "int x = 1;" → IDENT "x" followed by EQ, not LPAREN → VARIABLE (4)
+	encode_semantic_tokens("int x = 1;", &out);
+	assert(out.str_view() == "0,4,1,4,0", "Assignment target should be variable, got: %s", out.str_view());
+}
+
+fn void test_encode_const_ident() @test {
+	DString out = dstring::temp();
+	// "FOO" is CONST_IDENT → ENUM_MEMBER (index 13)
+	encode_semantic_tokens("FOO", &out);
+	assert(out.str_view() == "0,0,3,13,0", "CONST_IDENT should be enumMember, got: %s", out.str_view());
+}
+
+fn void test_encode_const_ident_not_function() @test {
+	DString out = dstring::temp();
+	// "FOO()" — CONST_IDENT is always ENUM_MEMBER, not promoted to FUNCTION
+	encode_semantic_tokens("FOO()", &out);
+	assert(out.str_view() == "0,0,3,13,0", "CONST_IDENT before LPAREN should stay enumMember, got: %s", out.str_view());
+}
+
+fn void test_encode_function_call_with_args() @test {
+	DString out = dstring::temp();
+	// "foo(x)" → "foo" FUNCTION (5), "x" VARIABLE (4)
+	encode_semantic_tokens("foo(x)", &out);
+	assert(out.str_view() == "0,0,3,5,0,0,4,1,4,0", "got: %s", out.str_view());
+}
+
+fn void test_encode_nested_function_calls() @test {
+	DString out = dstring::temp();
+	// "foo(bar())" → "foo" FUNCTION (5), "bar" FUNCTION (5)
+	encode_semantic_tokens("foo(bar())", &out);
+	assert(out.str_view() == "0,0,3,5,0,0,4,3,5,0", "got: %s", out.str_view());
+}
+
+fn void test_encode_method_call() @test {
+	DString out = dstring::temp();
+	// "x.foo()" → "x" VARIABLE (4), "foo" FUNCTION (5)
+	encode_semantic_tokens("x.foo()", &out);
+	assert(out.str_view() == "0,0,1,4,0,0,2,3,5,0", "got: %s", out.str_view());
+}
+
+fn void test_encode_variable_semicolon() @test {
+	DString out = dstring::temp();
+	// "x;" → IDENT "x" followed by EOS, not LPAREN → VARIABLE (4)
+	encode_semantic_tokens("x;", &out);
+	assert(out.str_view() == "0,0,1,4,0", "Ident before semicolon should be variable, got: %s", out.str_view());
 }

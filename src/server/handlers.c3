@@ -5,14 +5,14 @@ import std::core::mem;
 import std::collections::object;
 import std::time;
 
-const TOKEN_TYPES_LEGEND = `["namespace","type","enum","struct","variable","function","macro","keyword","decorator","comment","string","number","operator"]`;
+const TOKEN_TYPES_LEGEND = `["namespace","type","enum","struct","variable","function","macro","keyword","decorator","comment","string","number","operator","enumMember"]`;
 
 fn void handle_initialize(LspServer* server, Object* msg, String id_json) {
 	server.initialized = true;
 
 	// Extract initializationOptions if provided by the client
 	if (try opts = msg.get("params")!!.get("initializationOptions")) {
-		String stdlib = opts.get_string("stdlib") ?? "";
+		String stdlib = opts.get_string("stdlib-path") ?? "";
 		if (stdlib.len > 0 && server.stdlib_path.len == 0) {
 			// Client-provided stdlib overrides only if not set via CLI
 			char[] copy = mem::new_array(char, stdlib.len);

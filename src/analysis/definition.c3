@@ -11,7 +11,7 @@ import c3::lexer;
 const usz DEF_MAX_TOKENS = 16384;
 
 // Tokenize content into a heap-allocated token array. Caller must free.
-fn usz tokenize_content(String content, Token[] tokens) @private {
+fn usz tokenize_content(String content, Token[] tokens) {
 	Lexer lex;
 	lex.init(content);
 	usz count = 0;

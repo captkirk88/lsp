@@ -2,16 +2,35 @@ module lsp;
 
 import std::io;
 
+// Extracts the value from a CLI argument.
+// For --flag=value, returns the part after '='.
+// For --flag value, returns args[i+1] if available.
+fn String get_arg_value(String[] args, usz i) @private {
+	String arg = args[i];
+	for (usz j = 0; j < arg.len; j++) {
+		if (arg[j] == '=') {
+			return arg[j + 1..];
+		}
+	}
+	if (i + 1 < args.len) {
+		return args[i + 1];
+	}
+	return "";
+}
+
 fn int main(String[] args) {
 	String stdlib_path = "";
 	long diag_delay_ms = 2000; // Default 2 second delay
 
-	// Parse CLI arguments
+	// Parse CLI arguments (supports both --flag=value and --flag value)
 	for (usz i = 1; i < args.len; i++) {
-		if (args[i] == "--stdlib" && i + 1 < args.len) {
-			stdlib_path = args[++i];
-		} else if (args[i] == "--diagnostics-delay" && i + 1 < args.len) {
-			diag_delay_ms = (long)(args[++i].to_uint() ?? 2000);
+		String val = get_arg_value(args, i);
+		if (args[i].starts_with("--stdlib-path")) {
+			if (val.len > 0) { stdlib_path = val; }
+			if (args[i] == "--stdlib-path") { i++; }
+		} else if (args[i].starts_with("--diagnostics-delay")) {
+			if (val.len > 0) { diag_delay_ms = (long)(val.to_uint() ?? 2000); }
+			if (args[i] == "--diagnostics-delay") { i++; }
 		}
 	}
 

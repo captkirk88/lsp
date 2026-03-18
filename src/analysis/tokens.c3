@@ -19,6 +19,7 @@ enum SemanticCategory : inline char (int index) {
 	STRING_CAT { 10 },
 	NUMBER     { 11 },
 	OPERATOR   { 12 },
+	ENUM_MEMBER { 13 },
 	SKIP       { -1 },
 }
 
@@ -34,7 +35,7 @@ fn SemanticCategory map_token_type(TokenType t) {
 			return TYPE;
 		case CONST_IDENT:
 		case CT_CONST_IDENT:
-			return VARIABLE;
+			return ENUM_MEMBER;
 		case IDENT:
 			return VARIABLE;
 		case CT_IDENT:

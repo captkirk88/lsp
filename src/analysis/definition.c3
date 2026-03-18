@@ -126,9 +126,7 @@ fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz targe
 		case TYPE_IDENT:
 			for (usz i = 0; i + 1 < token_count; i++) {
 				TokenType kw = tokens[i].type;
-				if (kw == STRUCT || kw == UNION || kw == BITSTRUCT ||
-					kw == ENUM || kw == FAULTDEF || kw == INTERFACE ||
-					kw == TYPEDEF || kw == CONSTDEF || kw == ALIAS) {
+				if (is_type_declaration_keyword(kw)) {
 					if (tokens[i + 1].type == TYPE_IDENT && tokens[i + 1].text == name) {
 						return i + 1;
 					}
@@ -176,21 +174,6 @@ fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz targe
 	}
 
 	return token_count;
-}
-
-fn bool is_type_token(TokenType t) @private {
-	switch (t) {
-		case VOID: case BOOL: case CHAR: case ICHAR:
-		case SHORT: case USHORT: case INT: case UINT:
-		case LONG: case ULONG: case INT128: case UINT128:
-		case FLOAT: case DOUBLE: case FLOAT16: case BFLOAT16: case FLOAT128:
-		case IPTR: case UPTR: case ISZ: case USZ:
-		case FAULT: case ANY: case TYPEID:
-		case TYPE_IDENT: case VAR:
-			return true;
-		default:
-			return false;
-	}
 }
 
 // Scan project directories for a declaration on disk.

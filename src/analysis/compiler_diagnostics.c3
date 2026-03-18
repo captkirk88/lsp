@@ -6,8 +6,7 @@ import std::io::file;
 import std::os::process;
 import std::time;
 
-
-const usz COMPILER_OUTPUT_BUFFER = 65536;
+const usz COMPILER_OUTPUT_BUFFER   = 65536;
 const usz MAX_COMPILER_DIAGNOSTICS = 50;
 
 // Run c3c build -C --lsp from the project root and publish diagnostics.

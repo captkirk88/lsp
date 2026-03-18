@@ -48,7 +48,7 @@ const String[*] KEYWORDS = {
 	"union",
 	"var",
 	"while",
-};
+	};
 
 const String[*] BUILTIN_TYPES = {
 	"void",
@@ -75,7 +75,7 @@ const String[*] BUILTIN_TYPES = {
 	"fault",
 	"any",
 	"typeid",
-};
+	};
 
 const String[*] CT_KEYWORDS = {
 	"$alignof",
@@ -117,7 +117,7 @@ const String[*] CT_KEYWORDS = {
 	"$varef",
 	"$vasplat",
 	"$vatype",
-};
+	};
 
 const usz MAX_DOC_IDENTS = 512;
 

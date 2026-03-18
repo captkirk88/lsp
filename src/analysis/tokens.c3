@@ -1,34 +1,40 @@
 module lsp;
 
 import std::core::dstring;
+import std::collections::list;
 import c3::lexer;
+
+alias TokenList = List{Token};
 
 // Semantic token categories for LSP semantic highlighting.
 // The index value corresponds to the position in TOKEN_TYPES_LEGEND.
-enum SemanticCategory : inline char (int index) {
-	NAMESPACE  { 0 },
-	TYPE       { 1 },
-	ENUM_CAT   { 2 },
-	STRUCT_CAT { 3 },
-	VARIABLE   { 4 },
-	FUNCTION   { 5 },
-	MACRO_CAT  { 6 },
-	KEYWORD    { 7 },
-	DECORATOR  { 8 },
-	COMMENT    { 9 },
-	STRING_CAT { 10 },
-	NUMBER     { 11 },
-	OPERATOR   { 12 },
+enum SemanticCategory : inline char (int index)
+{
+	NAMESPACE   { 0 },
+	TYPE        { 1 },
+	ENUM_CAT    { 2 },
+	STRUCT_CAT  { 3 },
+	VARIABLE    { 4 },
+	FUNCTION    { 5 },
+	MACRO_CAT   { 6 },
+	KEYWORD     { 7 },
+	DECORATOR   { 8 },
+	COMMENT     { 9 },
+	STRING_CAT  { 10 },
+	NUMBER      { 11 },
+	OPERATOR    { 12 },
 	ENUM_MEMBER { 13 },
-	SKIP       { -1 },
+	SKIP        { -1 },
 }
 
 // Maps a TokenType to its semantic token category index.
 // Only emits tokens where the LSP adds value over the TextMate grammar.
 // Keywords, operators, comments, strings, numbers, and builtin types are
 // left to TextMate which has more nuanced scoping for these.
-fn SemanticCategory map_token_type(TokenType t) {
-	switch (t) {
+fn SemanticCategory map_token_type(TokenType t)
+{
+	switch (t)
+	{
 		// Identifiers — LSP adds value by confirming token kind from lexer
 		case TYPE_IDENT:
 		case CT_TYPE_IDENT:
@@ -42,33 +48,56 @@ fn SemanticCategory map_token_type(TokenType t) {
 			return MACRO_CAT;
 
 		// Decorators — @attributes
-		case AT_INLINE: case AT_PURE: case AT_NOINLINE:
+		case AT_INLINE:
+		case AT_PURE:
+		case AT_NOINLINE:
 		case AT_IDENT:
 			return DECORATOR;
 
 		// Everything else: skip and let TextMate grammar handle it.
 		// TextMate provides more nuanced scoping for:
-		//   - Keywords: keyword.declaration.* vs keyword.control vs storage.modifier
-		//   - Builtin types: storage.type.built-in.primitive
-		//   - Literals: constant.language (true/false/null), constant.numeric
-		//   - Comments: comment.line vs comment.block vs comment.block.documentation
-		//   - Strings: string.quoted.double vs string.quoted.single vs string.quoted.other
-		//   - Operators: keyword.operator.* with specific sub-scopes
+		// - Keywords: keyword.declaration.* vs keyword.control vs storage.modifier
+		// - Builtin types: storage.type.built-in.primitive
+		// - Literals: constant.language (true/false/null), constant.numeric
+		// - Comments: comment.line vs comment.block vs comment.block.documentation
+		// - Strings: string.quoted.double vs string.quoted.single vs string.quoted.other
+		// - Operators: keyword.operator.* with specific sub-scopes
 		default:
 			return SKIP;
 	}
 }
 
 // Checks if a token is a base type or type identifier (used for variable declarations).
-fn bool is_type_token(TokenType t) {
-	switch (t) {
-		case VOID: case BOOL: case CHAR: case ICHAR:
-		case SHORT: case USHORT: case INT: case UINT:
-		case LONG: case ULONG: case INT128: case UINT128:
-		case FLOAT: case DOUBLE: case FLOAT16: case BFLOAT16: case FLOAT128:
-		case IPTR: case UPTR: case ISZ: case USZ:
-		case FAULT: case ANY: case TYPEID:
-		case TYPE_IDENT: case VAR:
+fn bool is_type_token(TokenType t)
+{
+	switch (t)
+	{
+		case VOID:
+		case BOOL:
+		case CHAR:
+		case ICHAR:
+		case SHORT:
+		case USHORT:
+		case INT:
+		case UINT:
+		case LONG:
+		case ULONG:
+		case INT128:
+		case UINT128:
+		case FLOAT:
+		case DOUBLE:
+		case FLOAT16:
+		case BFLOAT16:
+		case FLOAT128:
+		case IPTR:
+		case UPTR:
+		case ISZ:
+		case USZ:
+		case FAULT:
+		case ANY:
+		case TYPEID:
+		case TYPE_IDENT:
+		case VAR:
 			return true;
 		default:
 			return false;
@@ -76,11 +105,19 @@ fn bool is_type_token(TokenType t) {
 }
 
 // Checks if a token introduces a type or constant declaration.
-fn bool is_type_declaration_keyword(TokenType t) {
-	switch (t) {
-		case STRUCT: case UNION: case BITSTRUCT:
-		case ENUM: case FAULTDEF: case INTERFACE:
-		case TYPEDEF: case CONSTDEF: case ALIAS:
+fn bool is_type_declaration_keyword(TokenType t)
+{
+	switch (t)
+	{
+		case STRUCT:
+		case UNION:
+		case BITSTRUCT:
+		case ENUM:
+		case FAULTDEF:
+		case INTERFACE:
+		case TYPEDEF:
+		case CONSTDEF:
+		case ALIAS:
 			return true;
 		default:
 			return false;
@@ -88,8 +125,10 @@ fn bool is_type_declaration_keyword(TokenType t) {
 }
 
 // Returns a human-readable description for a token (used in hover).
-fn String get_token_description(TokenType t, String text) {
-	switch (t) {
+fn String get_token_description(TokenType t, String text)
+{
+	switch (t)
+	{
 		// Keywords
 		case ALIAS: return "`alias` — Defines a type alias";
 		case ASM: return "`asm` — Inline assembly block";

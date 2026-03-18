@@ -46,32 +46,31 @@ fn usz find_line(LineOffsets* lo, usz offset)
 	return low > 0 ? low - 1 : 0;
 }
 
-const usz SEM_MAX_TOKENS = 16384;
-
 fn void encode_semantic_tokens(String content, DString* out)
 {
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
 
-	Token[] tokens = mem::new_array(Token, SEM_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	usz prev_line = 0;
 	usz prev_start_char = 0;
 	bool first = true;
 
-	for (usz i = 0; i < token_count; i++)
+	for (usz i = 0; i < tokens.size; i++)
 	{
-		Token tok = tokens[i];
+		Token tok = tokens.entries[i];
 		SemanticCategory category = map_token_type(tok.type);
 		if (category == SKIP) continue;
 
 		// Detect function calls: IDENT immediately followed by LPAREN
 		if (category == VARIABLE && tok.type == IDENT)
 		{
-			if (i + 1 < token_count && tokens[i + 1].type == LPAREN)
+			if (i + 1 < tokens.size && tokens.entries[i + 1].type == LPAREN)
 			{
 				category = FUNCTION;
 			}

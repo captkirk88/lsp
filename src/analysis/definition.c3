@@ -8,20 +8,16 @@ import std::encoding::json;
 import std::collections::object;
 import c3::lexer;
 
-const usz DEF_MAX_TOKENS = 16384;
-
-// Tokenize content into a heap-allocated token array. Caller must free.
-fn usz tokenize_content(String content, Token[] tokens)
+// Tokenize content into a token list.
+fn void tokenize_content(String content, TokenList* tokens)
 {
 	Lexer lex;
 	lex.init(content);
-	usz count = 0;
-	while (count < tokens.len)
+	while (true)
 	{
 		if (try tok = lex.next())
 		{
-			tokens[count] = tok;
-			count++;
+			tokens.push(tok);
 		}
 		else
 		{
@@ -30,20 +26,19 @@ fn usz tokenize_content(String content, Token[] tokens)
 			lex.col++;
 		}
 	}
-	return count;
 }
 
 // Find the token at a byte offset in a token stream.
 // If the offset lands between tokens (e.g. cursor at end of word),
 // also checks offset-1 to match the preceding token.
-fn bool find_token_at(Token[] tokens, usz count, usz offset, Token* result, usz* idx)
+fn bool find_token_at(TokenList* tokens, usz offset, Token* result, usz* idx)
 {
-	for (usz i = 0; i < count; i++)
+	for (usz i = 0; i < tokens.size; i++)
 	{
-		usz tok_end = tokens[i].offset + tokens[i].len;
-		if (tokens[i].offset <= offset && offset < tok_end)
+		usz tok_end = tokens.entries[i].offset + tokens.entries[i].len;
+		if (tokens.entries[i].offset <= offset && offset < tok_end)
 		{
-			*result = tokens[i];
+			*result = tokens.entries[i];
 			*idx = i;
 			return true;
 		}
@@ -52,12 +47,12 @@ fn bool find_token_at(Token[] tokens, usz count, usz offset, Token* result, usz*
 	if (offset > 0)
 	{
 		usz adj = offset - 1;
-		for (usz i = 0; i < count; i++)
+		for (usz i = 0; i < tokens.size; i++)
 		{
-			usz tok_end = tokens[i].offset + tokens[i].len;
-			if (tokens[i].offset <= adj && adj < tok_end)
+			usz tok_end = tokens.entries[i].offset + tokens.entries[i].len;
+			if (tokens.entries[i].offset <= adj && adj < tok_end)
 			{
-				*result = tokens[i];
+				*result = tokens.entries[i];
 				*idx = i;
 				return true;
 			}
@@ -86,24 +81,25 @@ fn void emit_location(String uri, String content, Token tok, DString* out)
 // Searches: current file -> open documents -> project files on disk -> stdlib.
 fn void encode_definition(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, DString* out)
 {
-	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	// Find the token at cursor
 	Token cursor_tok;
 	usz cursor_idx;
-	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx)) return;
+	if (!find_token_at(&tokens, offset, &cursor_tok, &cursor_idx)) return;
 
 	// Only navigate for identifier-like tokens
 	TokenType ct = cursor_tok.type;
 	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;
 
 	// 1. Search current file
-	usz decl_idx = find_declaration(tokens[..token_count > 0 ? token_count - 1 : 0], token_count, cursor_tok, cursor_idx);
-	if (decl_idx < token_count && decl_idx != cursor_idx)
+	usz decl_idx = find_declaration(&tokens, cursor_tok, cursor_idx);
+	if (decl_idx < tokens.size && decl_idx != cursor_idx)
 	{
-		emit_location(uri, content, tokens[decl_idx], out);
+		emit_location(uri, content, tokens.entries[decl_idx], out);
 		return;
 	}
 
@@ -112,17 +108,18 @@ fn void encode_definition(String uri, String content, usz offset, DocumentList* 
 	{
 		if (docs.entries[d].uri == uri) continue;
 
-		Token[] other_tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-		usz other_count = tokenize_content(docs.entries[d].content, other_tokens);
+		TokenList other_tokens;
+		other_tokens.init(mem);
+		tokenize_content(docs.entries[d].content, &other_tokens);
 
-		usz found = find_declaration_in(other_tokens[..other_count > 0 ? other_count - 1 : 0], other_count, cursor_tok);
-		if (found < other_count)
+		usz found = find_declaration_in(&other_tokens, cursor_tok);
+		if (found < other_tokens.size)
 		{
-			emit_location(docs.entries[d].uri, docs.entries[d].content, other_tokens[found], out);
-			mem::free(other_tokens);
+			emit_location(docs.entries[d].uri, docs.entries[d].content, other_tokens.entries[found], out);
+			other_tokens.free();
 			return;
 		}
-		mem::free(other_tokens);
+		other_tokens.free();
 	}
 
 	// 3. Scan project files on disk (src/ and lib/ relative to file)
@@ -146,27 +143,27 @@ fn void encode_definition(String uri, String content, usz offset, DocumentList* 
 }
 
 // Search for a declaration in a token stream (not tied to a cursor position).
-fn usz find_declaration_in(Token[] tokens, usz token_count, Token target) @private
+fn usz find_declaration_in(TokenList* tokens, Token target) @private
 {
-	return find_declaration(tokens, token_count, target, token_count); // pass impossible cursor_idx
+	return find_declaration(tokens, target, tokens.size); // pass impossible cursor_idx
 }
 
 // Searches for the declaration of a token in the token stream.
 // Returns the index of the name token at the declaration site,
-// or token_count if not found.
-fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz target_idx) @private
+// or tokens.size if not found.
+fn usz find_declaration(TokenList* tokens, Token target, usz target_idx) @private
 {
 	String name = target.text;
 
 	switch (target.type)
 	{
 		case TYPE_IDENT:
-			for (usz i = 0; i + 1 < token_count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				TokenType kw = tokens[i].type;
+				TokenType kw = tokens.entries[i].type;
 				if (is_type_declaration_keyword(kw))
 				{
-					if (tokens[i + 1].type == TYPE_IDENT && tokens[i + 1].text == name)
+					if (tokens.entries[i + 1].type == TYPE_IDENT && tokens.entries[i + 1].text == name)
 					{
 						return i + 1;
 					}
@@ -174,36 +171,36 @@ fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz targe
 			}
 		case CONST_IDENT:
 			// constdef NAME
-			for (usz i = 0; i + 1 < token_count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens[i].type == CONSTDEF && tokens[i + 1].type == CONST_IDENT && tokens[i + 1].text == name)
+				if (tokens.entries[i].type == CONSTDEF && tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
 			}
 			// enum member: enum Foo { NAME, ... }
-			for (usz i = 0; i + 1 < token_count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens[i].type != ENUM && tokens[i].type != FAULTDEF) continue;
+				if (tokens.entries[i].type != ENUM && tokens.entries[i].type != FAULTDEF) continue;
 				// Find the opening brace
 				usz brace = i + 1;
-				while (brace < token_count && tokens[brace].type != LBRACE) brace++;
-				if (brace >= token_count) continue;
+				while (brace < tokens.size && tokens.entries[brace].type != LBRACE) brace++;
+				if (brace >= tokens.size) continue;
 				// Scan enum body for matching CONST_IDENT
 				usz depth = 1;
-				for (usz j = brace + 1; j < token_count && depth > 0; j++)
+				for (usz j = brace + 1; j < tokens.size && depth > 0; j++)
 				{
-					if (tokens[j].type == LBRACE)
+					if (tokens.entries[j].type == LBRACE)
 					{
 						depth++;
 						continue;
 					}
-					if (tokens[j].type == RBRACE)
+					if (tokens.entries[j].type == RBRACE)
 					{
 						depth--;
 						continue;
 					}
-					if (depth == 1 && tokens[j].type == CONST_IDENT && tokens[j].text == name)
+					if (depth == 1 && tokens.entries[j].type == CONST_IDENT && tokens.entries[j].text == name)
 					{
 						return j;
 					}
@@ -211,38 +208,38 @@ fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz targe
 			}
 		case IDENT:
 			// fn ... name(
-			for (usz i = 0; i < token_count; i++)
+			for (usz i = 0; i < tokens.size; i++)
 			{
-				if (tokens[i].type != FUNC) continue;
-				for (usz j = i + 1; j < token_count && j < i + 64; j++)
+				if (tokens.entries[i].type != FUNC) continue;
+				for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
 				{
-					if (tokens[j].type == LPAREN)
+					if (tokens.entries[j].type == LPAREN)
 					{
-						if (j > 0 && tokens[j - 1].type == IDENT && tokens[j - 1].text == name)
+						if (j > 0 && tokens.entries[j - 1].type == IDENT && tokens.entries[j - 1].text == name)
 						{
 							return j - 1;
 						}
 						break;
 					}
-					if (tokens[j].type == LBRACE || tokens[j].type == EOS) break;
+					if (tokens.entries[j].type == LBRACE || tokens.entries[j].type == EOS) break;
 				}
 			}
 			// macro name
-			for (usz i = 0; i + 1 < token_count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens[i].type == MACRO && tokens[i + 1].type == IDENT && tokens[i + 1].text == name)
+				if (tokens.entries[i].type == MACRO && tokens.entries[i + 1].type == IDENT && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
 			}
 			// type IDENT = ...
-			for (usz i = 0; i + 1 < token_count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (is_type_token(tokens[i].type) && tokens[i + 1].type == IDENT && tokens[i + 1].text == name)
+				if (is_type_token(tokens.entries[i].type) && tokens.entries[i + 1].type == IDENT && tokens.entries[i + 1].text == name)
 				{
-					if (i + 2 < token_count)
+					if (i + 2 < tokens.size)
 					{
-						TokenType next = tokens[i + 2].type;
+						TokenType next = tokens.entries[i + 2].type;
 						if (next == EQ || next == EOS || next == COMMA)
 						{
 							return i + 1;
@@ -251,10 +248,10 @@ fn usz find_declaration(Token[] tokens, usz token_count, Token target, usz targe
 				}
 			}
 		default:
-			return token_count;
+			return tokens.size;
 	}
 
-	return token_count;
+	return tokens.size;
 }
 
 // Scan project directories for a declaration on disk.
@@ -424,21 +421,22 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 			if (try file_content = file::load(mem, full_path))
 			{
 				String content = (String)file_content;
-				Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-				usz count = tokenize_content(content, tokens);
+				TokenList tokens;
+				tokens.init(mem);
+				tokenize_content(content, &tokens);
 
-				usz found = find_declaration_in(tokens[..count > 0 ? count - 1 : 0], count, target);
-				if (found < count)
+				usz found = find_declaration_in(&tokens, target);
+				if (found < tokens.size)
 				{
 					// Build file:// URI from path
 					DString uri = dstring::temp();
 					uri.appendf("file://%s", full_path);
-					emit_location(uri.str_view(), content, tokens[found], out);
-					mem::free(tokens);
+					emit_location(uri.str_view(), content, tokens.entries[found], out);
+					tokens.free();
 					mem::free(file_content);
 					return true;
 				}
-				mem::free(tokens);
+				tokens.free();
 				mem::free(file_content);
 			}
 		}

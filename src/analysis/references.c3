@@ -12,13 +12,14 @@ import c3::lexer;
 // Output: JSON array of DocumentHighlight objects, or empty string if none.
 fn void encode_document_highlights(String content, usz offset, DString* out)
 {
-	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	Token cursor_tok;
 	usz cursor_idx;
-	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx)) return;
+	if (!find_token_at(&tokens, offset, &cursor_tok, &cursor_idx)) return;
 
 	TokenType ct = cursor_tok.type;
 	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;
@@ -29,16 +30,16 @@ fn void encode_document_highlights(String content, usz offset, DString* out)
 
 	bool first = true;
 	out.append("[");
-	for (usz i = 0; i < token_count; i++)
+	foreach (tok : tokens)
 	{
-		if (tokens[i].type == ct && tokens[i].text == cursor_tok.text)
+		if (tok.type == ct && tok.text == cursor_tok.text)
 		{
 			if (!first) out.append(",");
 			first = false;
 
-			usz line = find_line(lo, tokens[i].offset);
-			usz col = tokens[i].offset - lo.offsets[line];
-			usz end_col = col + tokens[i].len;
+			usz line = find_line(lo, tok.offset);
+			usz col = tok.offset - lo.offsets[line];
+			usz end_col = col + tok.len;
 
 			out.appendf(`{"range":{"start":{"line":%d,"character":%d},"end":{"line":%d,"character":%d}},"kind":1}`, line, col, line, end_col);
 		}
@@ -56,13 +57,14 @@ fn void encode_document_highlights(String content, usz offset, DString* out)
 // Output: JSON array of Location objects, or empty string if none.
 fn void encode_references(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, bool include_decl, DString* out)
 {
-	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	Token cursor_tok;
 	usz cursor_idx;
-	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx)) return;
+	if (!find_token_at(&tokens, offset, &cursor_tok, &cursor_idx)) return;
 
 	TokenType ct = cursor_tok.type;
 	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;
@@ -71,17 +73,18 @@ fn void encode_references(String uri, String content, usz offset, DocumentList* 
 	out.append("[");
 
 	// 1. Current file — collect all matching tokens
-	collect_refs_in_tokens(uri, content, tokens, token_count, cursor_tok, out, &first);
+	collect_refs_in_tokens(uri, content, &tokens, cursor_tok, out, &first);
 
 	// 2. Open documents
 	for (usz d = 0; d < docs.size; d++)
 	{
 		if (docs.entries[d].uri == uri) continue;
 
-		Token[] other_tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-		usz other_count = tokenize_content(docs.entries[d].content, other_tokens);
-		collect_refs_in_tokens(docs.entries[d].uri, docs.entries[d].content, other_tokens, other_count, cursor_tok, out, &first);
-		mem::free(other_tokens);
+		TokenList other_tokens;
+		other_tokens.init(mem);
+		tokenize_content(docs.entries[d].content, &other_tokens);
+		collect_refs_in_tokens(docs.entries[d].uri, docs.entries[d].content, &other_tokens, cursor_tok, out, &first);
+		other_tokens.free();
 	}
 
 	// 3. Scan project files on disk
@@ -106,22 +109,22 @@ fn void encode_references(String uri, String content, usz offset, DocumentList* 
 }
 
 // Collect all tokens matching target name+type from a pre-tokenized stream, emitting Location JSON.
-fn void collect_refs_in_tokens(String uri, String content, Token[] tokens, usz count, Token target, DString* out, bool* first) @private
+fn void collect_refs_in_tokens(String uri, String content, TokenList* tokens, Token target, DString* out, bool* first) @private
 {
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
 
-	for (usz i = 0; i < count; i++)
+	foreach (tok : tokens)
 	{
-		if (tokens[i].type == target.type && tokens[i].text == target.text)
+		if (tok.type == target.type && tok.text == target.text)
 		{
 			if (!*first) out.append(",");
 			*first = false;
 
-			usz line = find_line(lo, tokens[i].offset);
-			usz col = tokens[i].offset - lo.offsets[line];
-			usz end_col = col + tokens[i].len;
+			usz line = find_line(lo, tok.offset);
+			usz col = tok.offset - lo.offsets[line];
+			usz end_col = col + tok.len;
 
 			out.append(`{"uri":"`);
 			json_escape_into(out, uri);
@@ -134,13 +137,14 @@ fn void collect_refs_in_tokens(String uri, String content, Token[] tokens, usz c
 // Output: JSON WorkspaceEdit object, or empty string if none.
 fn void encode_rename(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, String new_name, DString* out)
 {
-	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	Token cursor_tok;
 	usz cursor_idx;
-	if (!find_token_at(tokens, token_count, offset, &cursor_tok, &cursor_idx))
+	if (!find_token_at(&tokens, offset, &cursor_tok, &cursor_idx))
 	{
 		return;
 	}
@@ -152,17 +156,18 @@ fn void encode_rename(String uri, String content, usz offset, DocumentList* docs
 	out.append(`{"changes":{`);
 
 	// 1. Current file
-	collect_rename_edits(uri, content, tokens, token_count, cursor_tok, new_name, out, &first_uri);
+	collect_rename_edits(uri, content, &tokens, cursor_tok, new_name, out, &first_uri);
 
 	// 2. Open documents
 	for (usz d = 0; d < docs.size; d++)
 	{
 		if (docs.entries[d].uri == uri) continue;
 
-		Token[] other_tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-		usz other_count = tokenize_content(docs.entries[d].content, other_tokens);
-		collect_rename_edits(docs.entries[d].uri, docs.entries[d].content, other_tokens, other_count, cursor_tok, new_name, out, &first_uri);
-		mem::free(other_tokens);
+		TokenList other_tokens;
+		other_tokens.init(mem);
+		tokenize_content(docs.entries[d].content, &other_tokens);
+		collect_rename_edits(docs.entries[d].uri, docs.entries[d].content, &other_tokens, cursor_tok, new_name, out, &first_uri);
+		other_tokens.free();
 	}
 
 	// 3. Scan project files on disk (skip stdlib — should not rename stdlib symbols)
@@ -181,7 +186,7 @@ fn void encode_rename(String uri, String content, usz offset, DocumentList* docs
 }
 
 // Collect rename edits for matching tokens in a single file, emitting a URI-keyed TextEdit array.
-fn void collect_rename_edits(String uri, String content, Token[] tokens, usz count, Token target, String new_name, DString* out, bool* first_uri) @private
+fn void collect_rename_edits(String uri, String content, TokenList* tokens, Token target, String new_name, DString* out, bool* first_uri) @private
 {
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
@@ -190,9 +195,9 @@ fn void collect_rename_edits(String uri, String content, Token[] tokens, usz cou
 	bool found_any = false;
 	bool first_edit = true;
 
-	for (usz i = 0; i < count; i++)
+	foreach (tok : tokens)
 	{
-		if (tokens[i].type == target.type && tokens[i].text == target.text)
+		if (tok.type == target.type && tok.text == target.text)
 		{
 			if (!found_any)
 			{
@@ -206,9 +211,9 @@ fn void collect_rename_edits(String uri, String content, Token[] tokens, usz cou
 			if (!first_edit) out.append(",");
 			first_edit = false;
 
-			usz line = find_line(lo, tokens[i].offset);
-			usz col = tokens[i].offset - lo.offsets[line];
-			usz end_col = col + tokens[i].len;
+			usz line = find_line(lo, tok.offset);
+			usz col = tok.offset - lo.offsets[line];
+			usz end_col = col + tok.len;
 
 			out.appendf(`{"range":{"start":{"line":%d,"character":%d},"end":{"line":%d,"character":%d}},"newText":"`, line, col, line, end_col);
 			json_escape_into(out, new_name);
@@ -371,14 +376,15 @@ fn void scan_dir_recursive_rename(String dir_path, Token target, String new_name
 			if (try file_content = file::load(mem, full_path))
 			{
 				String content = (String)file_content;
-				Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-				usz count = tokenize_content(content, tokens);
+				TokenList tokens;
+				tokens.init(mem);
+				tokenize_content(content, &tokens);
 
 				DString uri = dstring::temp();
 				uri.appendf("file://%s", full_path);
-				collect_rename_edits(uri.str_view(), content, tokens, count, target, new_name, out, first_uri);
+				collect_rename_edits(uri.str_view(), content, &tokens, target, new_name, out, first_uri);
 
-				mem::free(tokens);
+				tokens.free();
 				mem::free(file_content);
 			}
 		}
@@ -537,14 +543,15 @@ fn void scan_dir_recursive_refs(String dir_path, Token target, DString* out, boo
 			if (try file_content = file::load(mem, full_path))
 			{
 				String content = (String)file_content;
-				Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-				usz count = tokenize_content(content, tokens);
+				TokenList tokens;
+				tokens.init(mem);
+				tokenize_content(content, &tokens);
 
 				DString uri = dstring::temp();
 				uri.appendf("file://%s", full_path);
-				collect_refs_in_tokens(uri.str_view(), content, tokens, count, target, out, first);
+				collect_refs_in_tokens(uri.str_view(), content, &tokens, target, out, first);
 
-				mem::free(tokens);
+				tokens.free();
 				mem::free(file_content);
 			}
 		}

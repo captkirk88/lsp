@@ -12,35 +12,16 @@ fn void encode_document_symbols(String content, DString* out)
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
 
-	Lexer lex;
-	lex.init(content);
-
-	// Collect all tokens first (up to a reasonable limit)
-	const usz MAX_TOKENS = 16384;
-	Token[] tokens = mem::new_array(Token, MAX_TOKENS);
-	defer mem::free(tokens);
-	usz token_count = 0;
-
-	while (token_count < MAX_TOKENS)
-	{
-		if (try tok = lex.next())
-		{
-			tokens[token_count] = tok;
-			token_count++;
-		}
-		else
-		{
-			if (lex.at_end()) break;
-			lex.pos++;
-			lex.col++;
-		}
-	}
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
 	bool first = true;
 
-	for (usz i = 0; i < token_count; i++)
+	for (usz i = 0; i < tokens.size; i++)
 	{
-		Token tok = tokens[i];
+		Token tok = tokens.entries[i];
 		String name = "";
 		int kind = 0;
 		usz name_offset = 0;
@@ -53,55 +34,55 @@ fn void encode_document_symbols(String content, DString* out)
 		{
 			case MODULE:
 				// module IDENT
-				if (i + 1 < token_count && tokens[i + 1].type == IDENT)
+				if (i + 1 < tokens.size && tokens.entries[i + 1].type == IDENT)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					name = nt.text;
 					name_offset = nt.offset;
 					name_len = nt.len;
 					kind = 2; // Module
-					end_offset = find_eos_end(tokens[..token_count - 1], i + 2);
+					end_offset = find_eos_end(&tokens, i + 2);
 				}
 			case IMPORT:
 				// import IDENT
-				if (i + 1 < token_count && tokens[i + 1].type == IDENT)
+				if (i + 1 < tokens.size && tokens.entries[i + 1].type == IDENT)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					name = nt.text;
 					name_offset = nt.offset;
 					name_len = nt.len;
 					kind = 2; // Module
-					end_offset = find_eos_end(tokens[..token_count - 1], i + 2);
+					end_offset = find_eos_end(&tokens, i + 2);
 				}
 			case FUNC:
 				// fn ... IDENT LPAREN — the IDENT before LPAREN is the name
 				// If preceded by TYPE_IDENT DOT, combine as Type.method
 				usz lparen_idx = 0;
-				for (usz j = i + 1; j < token_count && j < i + MAX_LOOKAHEAD; j++)
+				for (usz j = i + 1; j < tokens.size && j < i + MAX_LOOKAHEAD; j++)
 				{
-					if (tokens[j].type == LPAREN)
+					if (tokens.entries[j].type == LPAREN)
 					{
 						lparen_idx = j;
 						break;
 					}
 					// Stop on LBRACE/EOS (malformed)
-					if (tokens[j].type == LBRACE || tokens[j].type == EOS) break;
+					if (tokens.entries[j].type == LBRACE || tokens.entries[j].type == EOS) break;
 				}
 				if (lparen_idx > 0 && lparen_idx > i + 1)
 				{
-					Token fn_name = tokens[lparen_idx - 1];
+					Token fn_name = tokens.entries[lparen_idx - 1];
 					if (fn_name.type == IDENT)
 					{
 						// Check for Type.method pattern
-						if (lparen_idx >= 3 + i && tokens[lparen_idx - 2].type == DOT && tokens[lparen_idx - 3].type == TYPE_IDENT)
+						if (lparen_idx >= 3 + i && tokens.entries[lparen_idx - 2].type == DOT && tokens.entries[lparen_idx - 3].type == TYPE_IDENT)
 						{
 							DString combined = dstring::temp();
-							combined.append(tokens[lparen_idx - 3].text);
+							combined.append(tokens.entries[lparen_idx - 3].text);
 							combined.append_char('.');
 							combined.append(fn_name.text);
 							name = combined.str_view();
-							name_offset = tokens[lparen_idx - 3].offset;
-							name_len = (fn_name.offset + fn_name.len) - tokens[lparen_idx - 3].offset;
+							name_offset = tokens.entries[lparen_idx - 3].offset;
+							name_len = (fn_name.offset + fn_name.len) - tokens.entries[lparen_idx - 3].offset;
 						}
 						else
 						{
@@ -117,9 +98,9 @@ fn void encode_document_symbols(String content, DString* out)
 			case UNION:
 			case BITSTRUCT:
 				// struct/union/bitstruct TYPE_IDENT
-				if (i + 1 < token_count && tokens[i + 1].type == TYPE_IDENT)
+				if (i + 1 < tokens.size && tokens.entries[i + 1].type == TYPE_IDENT)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					name = nt.text;
 					name_offset = nt.offset;
 					name_len = nt.len;
@@ -129,9 +110,9 @@ fn void encode_document_symbols(String content, DString* out)
 			case ENUM:
 			case FAULTDEF:
 				// enum/faultdef TYPE_IDENT
-				if (i + 1 < token_count && tokens[i + 1].type == TYPE_IDENT)
+				if (i + 1 < tokens.size && tokens.entries[i + 1].type == TYPE_IDENT)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					name = nt.text;
 					name_offset = nt.offset;
 					name_len = nt.len;
@@ -140,9 +121,9 @@ fn void encode_document_symbols(String content, DString* out)
 				}
 			case INTERFACE:
 				// interface TYPE_IDENT
-				if (i + 1 < token_count && tokens[i + 1].type == TYPE_IDENT)
+				if (i + 1 < tokens.size && tokens.entries[i + 1].type == TYPE_IDENT)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					name = nt.text;
 					name_offset = nt.offset;
 					name_len = nt.len;
@@ -151,9 +132,9 @@ fn void encode_document_symbols(String content, DString* out)
 				}
 			case MACRO:
 				// macro IDENT or macro TYPE_IDENT
-				if (i + 1 < token_count)
+				if (i + 1 < tokens.size)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					if (nt.type == IDENT || nt.type == TYPE_IDENT)
 					{
 						name = nt.text;
@@ -166,9 +147,9 @@ fn void encode_document_symbols(String content, DString* out)
 			case CONSTDEF:
 			case TYPEDEF:
 			case ALIAS:
-				if (i + 1 < token_count)
+				if (i + 1 < tokens.size)
 				{
-					Token nt = tokens[i + 1];
+					Token nt = tokens.entries[i + 1];
 					if (nt.type == TYPE_IDENT)
 					{
 						name = nt.text;
@@ -185,7 +166,7 @@ fn void encode_document_symbols(String content, DString* out)
 					}
 					if (kind != 0)
 					{
-						end_offset = find_eos_end(tokens[..token_count - 1], i + 2);
+						end_offset = find_eos_end(&tokens, i + 2);
 					}
 				}
 			default:
@@ -197,7 +178,7 @@ fn void encode_document_symbols(String content, DString* out)
 		// Find end of declaration for braced declarations
 		if (has_braces && end_offset == 0)
 		{
-			end_offset = find_brace_end(tokens[..token_count - 1], i + 1);
+			end_offset = find_brace_end(&tokens, i + 1);
 		}
 		if (end_offset == 0)
 		{
@@ -226,35 +207,35 @@ fn void encode_document_symbols(String content, DString* out)
 	}
 }
 
-fn usz find_eos_end(Token[] tokens, usz start) @private
+fn usz find_eos_end(TokenList* tokens, usz start) @private
 {
-	for (usz j = start; j < tokens.len; j++)
+	for (usz j = start; j < tokens.size; j++)
 	{
-		if (tokens[j].type == EOS)
+		if (tokens.entries[j].type == EOS)
 		{
-			return tokens[j].offset + tokens[j].len;
+			return tokens.entries[j].offset + tokens.entries[j].len;
 		}
 	}
 	return 0;
 }
 
-fn usz find_brace_end(Token[] tokens, usz start) @private
+fn usz find_brace_end(TokenList* tokens, usz start) @private
 {
 	usz depth = 0;
 	bool found_brace = false;
-	for (usz j = start; j < tokens.len; j++)
+	for (usz j = start; j < tokens.size; j++)
 	{
-		if (tokens[j].type == LBRACE)
+		if (tokens.entries[j].type == LBRACE)
 		{
 			depth++;
 			found_brace = true;
 		}
-		else if (tokens[j].type == RBRACE)
+		else if (tokens.entries[j].type == RBRACE)
 		{
 			if (depth > 0) depth--;
 			if (depth == 0 && found_brace)
 			{
-				return tokens[j].offset + tokens[j].len;
+				return tokens.entries[j].offset + tokens.entries[j].len;
 			}
 		}
 	}

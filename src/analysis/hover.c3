@@ -13,10 +13,10 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
-	
+
 	Lexer lex;
 	lex.init(content);
-	
+
 	while (true)
 	{
 		if (try tok = lex.next())
@@ -101,78 +101,79 @@ fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentLi
 // Tokenize content, find the declaration of target, and extract doc comment + signature.
 fn bool try_extract_docs_from(String content, Token target, DString* out) @private
 {
-	Token[] tokens = mem::new_array(Token, DEF_MAX_TOKENS);
-	defer mem::free(tokens);
-	usz count = tokenize_content(content, tokens);
+	TokenList tokens;
+	tokens.init(mem);
+	defer tokens.free();
+	tokenize_content(content, &tokens);
 
-	usz decl_idx = find_decl_for_hover(tokens, count, target);
-	if (decl_idx >= count) return false;
+	usz decl_idx = find_decl_for_hover(&tokens, target);
+	if (decl_idx >= tokens.size) return false;
 
-	extract_docs_at(content, tokens, count, decl_idx, out);
+	extract_docs_at(content, &tokens, decl_idx, out);
 	return out.str_view().len > 0;
 }
 
 // Find the declaration index — similar to find_declaration but also checks same-name at cursor.
-fn usz find_decl_for_hover(Token[] tokens, usz count, Token target) @private
+fn usz find_decl_for_hover(TokenList* tokens, Token target) @private
 {
 	String name = target.text;
 
 	switch (target.type)
 	{
 		case TYPE_IDENT:
-			for (usz i = 0; i + 1 < count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (is_type_declaration_keyword(tokens[i].type))
+				if (is_type_declaration_keyword(tokens.entries[i].type))
 				{
-					if (tokens[i + 1].type == TYPE_IDENT && tokens[i + 1].text == name)
+					if (tokens.entries[i + 1].type == TYPE_IDENT && tokens.entries[i + 1].text == name)
 					{
 						return i + 1;
 					}
 				}
 			}
 		case CONST_IDENT:
-			for (usz i = 0; i + 1 < count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens[i].type == CONSTDEF && tokens[i + 1].type == CONST_IDENT && tokens[i + 1].text == name)
+				if (tokens.entries[i].type == CONSTDEF && tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
 			}
 		case IDENT:
 			// fn ... name(
-			for (usz i = 0; i < count; i++)
+			for (usz i = 0; i < tokens.size; i++)
 			{
-				if (tokens[i].type != FUNC) continue;
-				for (usz j = i + 1; j < count && j < i + 64; j++)
+				if (tokens.entries[i].type != FUNC) continue;
+				for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
 				{
-					if (tokens[j].type == LPAREN)
+					if (tokens.entries[j].type == LPAREN)
 					{
-						if (j > 0 && tokens[j - 1].type == IDENT && tokens[j - 1].text == name)
+						if (j > 0 && tokens.entries[j - 1].type == IDENT && tokens.entries[j - 1].text == name)
 						{
 							return j - 1;
 						}
 						break;
 					}
-					if (tokens[j].type == LBRACE || tokens[j].type == EOS) break;
+					if (tokens.entries[j].type == LBRACE || tokens.entries[j].type == EOS) break;
 				}
 			}
 			// macro name
-			for (usz i = 0; i + 1 < count; i++)
+			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens[i].type == MACRO && tokens[i + 1].type == IDENT && tokens[i + 1].text == name)
+				if (tokens.entries[i].type == MACRO && tokens.entries[i + 1].type == IDENT && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
 			}
 		default:
-			return count;
+			return tokens.size;
 	}
 
-	return count;
+	return tokens.size;
 }
 
 // Extract doc comment and signature from the declaration site.
-fn void extract_docs_at(String content, Token[] tokens, usz count, usz decl_idx, DString* out) @private
+fn void extract_docs_at(String content, TokenList* tokens, usz decl_idx, DString* out) @private
 {
 	// Find the start of the declaration (fn, struct, macro, constdef, etc.)
 	usz decl_start_idx = decl_idx;
@@ -181,10 +182,8 @@ fn void extract_docs_at(String content, Token[] tokens, usz count, usz decl_idx,
 		// Walk back to find the keyword that starts this declaration
 		for (usz i = decl_idx; i > 0; i--)
 		{
-			TokenType t = tokens[i - 1].type;
-			if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM ||
-				t == BITSTRUCT || t == INTERFACE || t == FAULTDEF || t == CONSTDEF ||
-				t == TYPEDEF || t == ALIAS || t == ATTRDEF)
+			TokenType t = tokens.entries[i - 1].type;
+			if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM || t == BITSTRUCT || t == INTERFACE || t == FAULTDEF || t == CONSTDEF || t == TYPEDEF || t == ALIAS || t == ATTRDEF)
 			{
 				decl_start_idx = i - 1;
 				break;
@@ -195,17 +194,17 @@ fn void extract_docs_at(String content, Token[] tokens, usz count, usz decl_idx,
 	}
 
 	// Extract the signature line from source
-	usz sig_start = tokens[decl_start_idx].offset;
+	usz sig_start = tokens.entries[decl_start_idx].offset;
 	// Find the end: up to '{' or ';' or end of token stream
 	usz sig_end = sig_start;
-	for (usz i = decl_start_idx; i < count; i++)
+	for (usz i = decl_start_idx; i < tokens.size; i++)
 	{
-		if (tokens[i].type == LBRACE || tokens[i].type == EOS)
+		if (tokens.entries[i].type == LBRACE || tokens.entries[i].type == EOS)
 		{
-			sig_end = tokens[i].offset;
+			sig_end = tokens.entries[i].offset;
 			break;
 		}
-		sig_end = tokens[i].offset + tokens[i].len;
+		sig_end = tokens.entries[i].offset + tokens.entries[i].len;
 	}
 	// Trim trailing whitespace
 	while (sig_end > sig_start && (content[sig_end - 1] == ' ' || content[sig_end - 1] == '\t' || content[sig_end - 1] == '\n' || content[sig_end - 1] == '\r'))
@@ -222,7 +221,7 @@ fn void extract_docs_at(String content, Token[] tokens, usz count, usz decl_idx,
 		usz first_comment = decl_start_idx;
 		for (usz i = decl_start_idx; i > 0; i--)
 		{
-			TokenType t = tokens[i - 1].type;
+			TokenType t = tokens.entries[i - 1].type;
 			if (t == LINE_COMMENT || t == BLOCK_COMMENT || t == CONTRACT)
 			{
 				first_comment = i - 1;
@@ -235,9 +234,9 @@ fn void extract_docs_at(String content, Token[] tokens, usz count, usz decl_idx,
 
 		for (usz i = first_comment; i < decl_start_idx; i++)
 		{
-			if (tokens[i].type == LINE_COMMENT || tokens[i].type == BLOCK_COMMENT || tokens[i].type == CONTRACT)
+			if (tokens.entries[i].type == LINE_COMMENT || tokens.entries[i].type == BLOCK_COMMENT || tokens.entries[i].type == CONTRACT)
 			{
-				String text = content[tokens[i].offset:tokens[i].len];
+				String text = content[tokens.entries[i].offset:tokens.entries[i].len];
 				String cleaned = strip_comment_markers(text);
 				if (cleaned.len > 0)
 				{
@@ -372,7 +371,11 @@ fn bool scan_project_docs(String file_path, Token target, DString* out) @private
 						usz dir_end = src.len;
 						for (usz j = 0; j < src.len; j++)
 						{
-							if (src[j] == '*') { dir_end = j; break; }
+							if (src[j] == '*')
+							{
+								dir_end = j;
+								break;
+							}
 						}
 						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
 						if (dir_end > 0)
@@ -381,7 +384,11 @@ fn bool scan_project_docs(String file_path, Token target, DString* out) @private
 							bool dup = false;
 							for (usz k = 0; k < search_count; k++)
 							{
-								if (search_dirs[k] == src_dir) { dup = true; break; }
+								if (search_dirs[k] == src_dir)
+								{
+									dup = true;
+									break;
+								}
 							}
 							if (!dup) search_dirs[search_count++] = src_dir;
 						}
@@ -412,9 +419,23 @@ fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth) @p
 	if (depth > MAX_SCAN_DEPTH) return false;
 
 	Path p;
-	if (try pp = path::temp(dir_path)) { p = pp; } else { return false; }
+	if (try pp = path::temp(dir_path))
+	{
+		p = pp;
+	}
+	else
+	{
+		return false;
+	}
 	PathList entries;
-	if (try el = path::ls(mem, p)) { entries = el; } else { return false; }
+	if (try el = path::ls(mem, p))
+	{
+		entries = el;
+	}
+	else
+	{
+		return false;
+	}
 	defer
 	{
 		foreach (&e : entries) e.free();

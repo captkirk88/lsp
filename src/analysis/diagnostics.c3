@@ -5,7 +5,8 @@ import c3::lexer;
 
 const MAX_DIAGNOSTICS = 20;
 
-fn void publish_diagnostics(String uri, String content) {
+fn void publish_diagnostics(String uri, String content)
+{
 	DString diags = dstring::temp();
 	diags.append_char('[');
 	int diag_count = 0;
@@ -13,14 +14,19 @@ fn void publish_diagnostics(String uri, String content) {
 	Lexer lex;
 	lex.init(content);
 
-	while (true) {
-		if (try tok = lex.next()) {
+	while (true)
+	{
+		if (try tok = lex.next())
+		{
 			continue;
-		} else {
+		}
+		else
+		{
 			// EOF — done lexing
 			if (lex.at_end()) break;
 
-			if (diag_count >= MAX_DIAGNOSTICS) {
+			if (diag_count >= MAX_DIAGNOSTICS)
+			{
 				lex.pos++;
 				lex.col++;
 				continue;

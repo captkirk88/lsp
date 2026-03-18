@@ -4,7 +4,8 @@ import std::core::dstring;
 import std::core::mem;
 import c3::lexer;
 
-fn void encode_hover(String content, usz offset, DString* out) {
+fn void encode_hover(String content, usz offset, DString* out)
+{
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
@@ -12,10 +13,13 @@ fn void encode_hover(String content, usz offset, DString* out) {
 	Lexer lex;
 	lex.init(content);
 
-	while (true) {
-		if (try tok = lex.next()) {
+	while (true)
+	{
+		if (try tok = lex.next())
+		{
 			usz tok_end = tok.offset + tok.len;
-			if (tok.offset <= offset && offset < tok_end) {
+			if (tok.offset <= offset && offset < tok_end)
+			{
 				String desc = get_token_description(tok.type, tok.text);
 				if (desc.len == 0) return;
 
@@ -30,11 +34,12 @@ fn void encode_hover(String content, usz offset, DString* out) {
 				return;
 			}
 			if (tok.offset > offset) return;
-		} else {
+		}
+		else
+		{
 			if (lex.at_end()) break;
 			lex.pos++;
 			lex.col++;
 		}
 	}
 }
-

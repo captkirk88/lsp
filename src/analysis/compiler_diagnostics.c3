@@ -10,7 +10,8 @@ const usz MAX_COMPILER_DIAGNOSTICS = 50;
 
 // Run c3c compile-only with --lsp flag on the file and publish diagnostics.
 // The file URI is converted to a path and the on-disk file is compiled.
-fn void publish_compiler_diagnostics(LspServer* server, String uri) {
+fn void publish_compiler_diagnostics(LspServer* server, String uri)
+{
 	String path = uri_to_path(uri);
 	if (path.len == 0) return;
 
@@ -21,19 +22,24 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 	cmd[cmd_len++] = "compile-only";
 	cmd[cmd_len++] = "-C";
 	cmd[cmd_len++] = "--lsp";
-	if (server.stdlib_path.len > 0) {
+	if (server.stdlib_path.len > 0)
+	{
 		cmd[cmd_len++] = "--stdlib";
 		cmd[cmd_len++] = server.stdlib_path;
 	}
 	cmd[cmd_len++] = path;
 
 	SubProcess proc;
-	if (try p = process::create(cmd[:cmd_len], { .search_user_path = true, .combined_stdout_stderr = true })) {
+	if (try p = process::create(cmd[:cmd_len], { .search_user_path = true, .combined_stdout_stderr = true }))
+	{
 		proc = p;
-	} else {
+	}
+	else
+	{
 		return;
 	}
-	if (catch proc.join()) {
+	if (catch proc.join())
+	{
 		proc.destroy();
 		return;
 	}
@@ -41,7 +47,8 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 	char[] buf = mem::new_array(char, COMPILER_OUTPUT_BUFFER);
 	defer mem::free(buf);
 	usz total_read = 0;
-	while (total_read < COMPILER_OUTPUT_BUFFER) {
+	while (total_read < COMPILER_OUTPUT_BUFFER)
+	{
 		usz n = proc.read_stdout(&buf[total_read], COMPILER_OUTPUT_BUFFER - total_read) ?? 0;
 		if (n == 0) break;
 		total_read += n;
@@ -56,17 +63,20 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 
 	// Parse LSPERR lines: LSPERR|severity|"file"|line|col|"message"
 	usz pos = 0;
-	while (pos < output.len && diag_count < MAX_COMPILER_DIAGNOSTICS) {
+	while (pos < output.len && diag_count < MAX_COMPILER_DIAGNOSTICS)
+	{
 		// Find next line
 		usz line_end = pos;
-		while (line_end < output.len && output[line_end] != '\n') {
+		while (line_end < output.len && output[line_end] != '\n')
+		{
 			line_end++;
 		}
 		String line = output[pos..line_end > pos ? line_end - 1 : pos];
 		pos = line_end + 1;
 
 		// Strip leading "> " if present
-		if (line.len >= 2 && line[0] == '>' && line[1] == ' ') {
+		if (line.len >= 2 && line[0] == '>' && line[1] == ' ')
+		{
 			line = line[2..];
 		}
 
@@ -82,48 +92,67 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 		String col_str;
 		String msg_str;
 
-		if (try sep1 = rest.index_of_char('|')) {
+		if (try sep1 = rest.index_of_char('|'))
+		{
 			severity_str = rest[:sep1];
 			rest = rest[sep1 + 1..];
-		} else {
+		}
+		else
+		{
 			continue;
 		}
 
 		// Extract file (quoted)
-		if (rest.len > 0 && rest[0] == '"') {
-			if (try end_quote = rest[1..].index_of_char('"')) {
+		if (rest.len > 0 && rest[0] == '"')
+		{
+			if (try end_quote = rest[1..].index_of_char('"'))
+			{
 				file_str = rest[1..end_quote];
 				rest = rest[end_quote + 2..]; // skip closing quote
-				if (rest.len > 0 && rest[0] == '|') {
+				if (rest.len > 0 && rest[0] == '|')
+				{
 					rest = rest[1..];
 				}
-			} else {
+			}
+			else
+			{
 				continue;
 			}
-		} else {
+		}
+		else
+		{
 			continue;
 		}
 
 		// Extract line number
-		if (try sep = rest.index_of_char('|')) {
+		if (try sep = rest.index_of_char('|'))
+		{
 			line_str = rest[:sep];
 			rest = rest[sep + 1..];
-		} else {
+		}
+		else
+		{
 			continue;
 		}
 
 		// Extract column
-		if (try sep = rest.index_of_char('|')) {
+		if (try sep = rest.index_of_char('|'))
+		{
 			col_str = rest[:sep];
 			rest = rest[sep + 1..];
-		} else {
+		}
+		else
+		{
 			continue;
 		}
 
 		// Extract message (quoted)
-		if (rest.len >= 2 && rest[0] == '"' && rest[rest.len - 1] == '"') {
+		if (rest.len >= 2 && rest[0] == '"' && rest[rest.len - 1] == '"')
+		{
 			msg_str = rest[1..rest.len - 2];
-		} else {
+		}
+		else
+		{
 			msg_str = rest;
 		}
 
@@ -135,9 +164,12 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 
 		// Map severity
 		int sev = 1; // error
-		if (severity_str == "warning") {
+		if (severity_str == "warning")
+		{
 			sev = 2;
-		} else if (severity_str == "note" || severity_str == "info") {
+		}
+		else if (severity_str == "note" || severity_str == "info")
+		{
 			sev = 3;
 		}
 
@@ -174,11 +206,14 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri) {
 }
 
 // Convert file:// URI to filesystem path.
-fn String uri_to_path(String uri) {
-	if (uri.starts_with("file:///")) {
+fn String uri_to_path(String uri)
+{
+	if (uri.starts_with("file:///"))
+	{
 		return uri[7..]; // "file:///path" -> "/path"
 	}
-	if (uri.starts_with("file://")) {
+	if (uri.starts_with("file://"))
+	{
 		return uri[7..];
 	}
 	return "";

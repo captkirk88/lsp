@@ -13,10 +13,10 @@ fn void encode_hover(String uri, String content, usz offset, DocumentStore* docs
 	LineOffsets* lo = mem::new(LineOffsets);
 	defer mem::free(lo);
 	build_line_offsets(content, lo);
-
+	
 	Lexer lex;
 	lex.init(content);
-
+	
 	while (true)
 	{
 		if (try tok = lex.next())

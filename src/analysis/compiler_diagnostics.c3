@@ -2,32 +2,52 @@ module lsp;
 
 import std::core::dstring;
 import std::core::mem;
+import std::io::file;
 import std::os::process;
 import std::time;
+
 
 const usz COMPILER_OUTPUT_BUFFER = 65536;
 const usz MAX_COMPILER_DIAGNOSTICS = 50;
 
-// Run c3c compile-only with --lsp flag on the file and publish diagnostics.
-// The file URI is converted to a path and the on-disk file is compiled.
+// Run c3c build -C --lsp from the project root and publish diagnostics.
+// Falls back to compile-only for standalone files with no project.json.
 fn void publish_compiler_diagnostics(LspServer* server, String uri)
 {
 	String path = uri_to_path(uri);
 	if (path.len == 0) return;
 
+	// Find project root by walking up from file looking for project.json
+	String project_root = find_project_root(path);
+
 	// Build command line
-	String[8] cmd;
+	String[10] cmd;
 	usz cmd_len = 0;
-	cmd[cmd_len++] = "c3c";
-	cmd[cmd_len++] = "compile-only";
-	cmd[cmd_len++] = "-C";
-	cmd[cmd_len++] = "--lsp";
+	cmd[cmd_len++] = server.compiler_path;
+
+	if (project_root.len > 0)
+	{
+		// Project-level build: checks all files together
+		cmd[cmd_len++] = "build";
+		cmd[cmd_len++] = "-C";
+		cmd[cmd_len++] = "--lsp";
+		cmd[cmd_len++] = "--path";
+		cmd[cmd_len++] = project_root;
+	}
+	else
+	{
+		// Standalone file: compile-only
+		cmd[cmd_len++] = "compile-only";
+		cmd[cmd_len++] = "-C";
+		cmd[cmd_len++] = "--lsp";
+		cmd[cmd_len++] = path;
+	}
+
 	if (server.stdlib_path.len > 0)
 	{
 		cmd[cmd_len++] = "--stdlib";
 		cmd[cmd_len++] = server.stdlib_path;
 	}
-	cmd[cmd_len++] = path;
 
 	SubProcess proc;
 	if (try p = process::create(cmd[:cmd_len], { .search_user_path = true, .combined_stdout_stderr = true }))
@@ -36,6 +56,11 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 	}
 	else
 	{
+		DString errmsg = dstring::temp();
+		errmsg.append(`{"type":1,"message":"c3-lsp: failed to run '`);
+		json_escape_into(&errmsg, server.compiler_path);
+		errmsg.append(`'. Make sure c3c is in your PATH or set compiler-path."}`);
+		send_notification("window/showMessage", errmsg.str_view());
 		return;
 	}
 	if (catch proc.join())
@@ -57,6 +82,8 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 
 	String output = (String)buf[:total_read];
 
+	// Collect diagnostics per file, but only publish for the triggering URI.
+	// Also clear diagnostics when there are no errors for this file.
 	DString diags = dstring::temp();
 	diags.append_char('[');
 	int diag_count = 0;
@@ -71,7 +98,7 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 		{
 			line_end++;
 		}
-		String line = output[pos..line_end > pos ? line_end - 1 : pos];
+		String line = output[pos:line_end - pos];
 		pos = line_end + 1;
 
 		// Strip leading "> " if present
@@ -107,7 +134,7 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 		{
 			if (try end_quote = rest[1..].index_of_char('"'))
 			{
-				file_str = rest[1..end_quote];
+				file_str = rest[1:end_quote];
 				rest = rest[end_quote + 2..]; // skip closing quote
 				if (rest.len > 0 && rest[0] == '|')
 				{
@@ -123,6 +150,9 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 		{
 			continue;
 		}
+
+		// Only collect diagnostics for the file that triggered the build
+		if (!path_matches_uri(file_str, uri)) continue;
 
 		// Extract line number
 		if (try sep = rest.index_of_char('|'))
@@ -149,7 +179,7 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 		// Extract message (quoted)
 		if (rest.len >= 2 && rest[0] == '"' && rest[rest.len - 1] == '"')
 		{
-			msg_str = rest[1..rest.len - 2];
+			msg_str = rest[1:rest.len - 2];
 		}
 		else
 		{
@@ -203,6 +233,57 @@ fn void publish_compiler_diagnostics(LspServer* server, String uri)
 
 	// Update last diagnostics time
 	server.last_diag_time = time::now();
+}
+
+// Find project root by walking up from a file path looking for project.json.
+fn String find_project_root(String file_path) @private
+{
+	String check_dir = parent_dir(file_path);
+	for (int depth = 0; depth < 10; depth++)
+	{
+		if (check_dir.len == 0 || check_dir == "/") break;
+		DString pj = dstring::temp();
+		pj.appendf("%s/project.json", check_dir);
+		if (try data = file::load(mem, pj.str_view()))
+		{
+			mem::free(data);
+			return check_dir;
+		}
+		check_dir = parent_dir(check_dir);
+	}
+	return "";
+}
+
+// Check if a filesystem path matches a file:// URI.
+// Compares from the end to handle symlink prefix differences
+// (e.g. /home/user vs /var/home/user).
+fn bool path_matches_uri(String file_path, String uri) @private
+{
+	String uri_path = uri_to_path(uri);
+	if (file_path == uri_path) return true;
+	if (file_path.len == 0 || uri_path.len == 0) return false;
+
+	// Count matching characters from the end
+	usz fi = file_path.len;
+	usz ui = uri_path.len;
+	while (fi > 0 && ui > 0 && file_path[fi - 1] == uri_path[ui - 1])
+	{
+		fi--;
+		ui--;
+	}
+	usz matched = file_path.len - fi;
+	if (matched == 0) return false;
+
+	// The divergence point must be at a '/' boundary in both paths
+	if (fi != 0 && file_path[fi] != '/') return false;
+	if (ui != 0 && uri_path[ui] != '/') return false;
+
+	// The matched suffix must contain at least one '/' (filename + directory)
+	for (usz k = fi; k < file_path.len; k++)
+	{
+		if (file_path[k] == '/') return true;
+	}
+	return false;
 }
 
 // Convert file:// URI to filesystem path.

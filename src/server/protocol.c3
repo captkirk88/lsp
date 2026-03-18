@@ -12,13 +12,14 @@ struct LspServer
 	bool running;
 	DocumentStore documents;
 	String stdlib_path;
+	String compiler_path;
 	long diag_delay_ms;
 	Time last_diag_time;
 }
 
-fn void LspServer.init(&self, String stdlib_path, long diag_delay_ms)
+fn void LspServer.init(&self, String stdlib_path, String compiler_path, long diag_delay_ms)
 {
-	*self = { .running = true, .stdlib_path = stdlib_path, .diag_delay_ms = diag_delay_ms, };
+	*self = { .running = true, .stdlib_path = stdlib_path, .compiler_path = compiler_path, .diag_delay_ms = diag_delay_ms, };
 }
 
 fn void handle_message(LspServer* server, String message)

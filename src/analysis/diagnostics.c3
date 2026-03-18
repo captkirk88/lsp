@@ -65,5 +65,7 @@ fn void publish_diagnostics(String uri, String content)
 	params.append(diags.str_view());
 	params.append_char('}');
 
-	send_notification("textDocument/publishDiagnostics", params.str_view());
+	if (diag_count > 0) {
+		send_notification("textDocument/publishDiagnostics", params.str_view());
+	}
 }

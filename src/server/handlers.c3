@@ -17,10 +17,16 @@ fn void handle_initialize(LspServer* server, Object* msg, String id_json)
 		String stdlib = opts.get_string("stdlib-path") ?? "";
 		if (stdlib.len > 0 && server.stdlib_path.len == 0)
 		{
-			// Client-provided stdlib overrides only if not set via CLI
 			char[] copy = mem::new_array(char, stdlib.len);
 			copy[..] = stdlib[..];
 			server.stdlib_path = (String)copy;
+		}
+		String compiler = opts.get_string("compiler-path") ?? "";
+		if (compiler.len > 0 && server.compiler_path == "c3c")
+		{
+			char[] copy = mem::new_array(char, compiler.len);
+			copy[..] = compiler[..];
+			server.compiler_path = (String)copy;
 		}
 		int delay = opts.get_int("diagnosticsDelay") ?? 0;
 		if (delay > 0 && server.diag_delay_ms == 0)

@@ -20,6 +20,7 @@ fn String get_arg_value(String[] args, usz i) @private {
 
 fn int main(String[] args) {
 	String stdlib_path = "";
+	String compiler_path = "c3c";
 	long diag_delay_ms = 2000; // Default 2 second delay
 
 	// Parse CLI arguments (supports both --flag=value and --flag value)
@@ -28,6 +29,9 @@ fn int main(String[] args) {
 		if (args[i].starts_with("--stdlib-path")) {
 			if (val.len > 0) { stdlib_path = val; }
 			if (args[i] == "--stdlib-path") { i++; }
+		} else if (args[i].starts_with("--compiler-path")) {
+			if (val.len > 0) { compiler_path = val; }
+			if (args[i] == "--compiler-path") { i++; }
 		} else if (args[i].starts_with("--diagnostics-delay")) {
 			if (val.len > 0) { diag_delay_ms = (long)(val.to_uint() ?? 2000); }
 			if (args[i] == "--diagnostics-delay") { i++; }
@@ -35,7 +39,7 @@ fn int main(String[] args) {
 	}
 
 	LspServer server;
-	server.init(stdlib_path, diag_delay_ms);
+	server.init(stdlib_path, compiler_path, diag_delay_ms);
 
 	InStream stdin_stream = io::stdin();
 

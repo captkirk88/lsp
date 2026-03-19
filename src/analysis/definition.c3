@@ -8,6 +8,101 @@ import std::encoding::json;
 import std::collections::object;
 import c3::lexer;
 
+const int MAX_SEARCH_DIRS = 32;
+
+struct ProjectDirs
+{
+	String project_root;
+	String[MAX_SEARCH_DIRS] dirs;
+	usz count;
+}
+
+// Find project root and collect all search directories from project.json.
+// Includes dependency-search-paths, sources dirs, and build/unpacked_c3l.
+fn void get_project_search_dirs(String file_path, ProjectDirs* result)
+{
+	result.project_root = "";
+	result.count = 0;
+
+	String check_dir = parent_dir(file_path);
+	char[]? project_json_data;
+	for (int depth = 0; depth < 10; depth++)
+	{
+		if (check_dir.len == 0 || check_dir == "/") break;
+		DString pj = dstring::temp();
+		pj.appendf("%s/project.json", check_dir);
+		if (try data = file::load(mem, pj.str_view()))
+		{
+			result.project_root = check_dir;
+			project_json_data = data;
+			break;
+		}
+		check_dir = parent_dir(check_dir);
+	}
+
+	if (result.project_root.len == 0) return;
+
+	if (try data = project_json_data)
+	{
+		defer mem::free(data);
+		if (try pjson = json::tparse_string((String)data))
+		{
+			if (try deps = pjson.get("dependency-search-paths"))
+			{
+				usz deps_len = deps.get_len();
+				for (usz i = 0; i < deps_len && result.count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = deps.get_at(i);
+					if (item == null) break;
+					if (item.is_string()) result.dirs[result.count++] = item.s;
+				}
+			}
+			if (try srcs = pjson.get("sources"))
+			{
+				usz srcs_len = srcs.get_len();
+				for (usz i = 0; i < srcs_len && result.count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = srcs.get_at(i);
+					if (item == null) break;
+					if (item.is_string())
+					{
+						String src = item.s;
+						usz dir_end = src.len;
+						for (usz j = 0; j < src.len; j++)
+						{
+							if (src[j] == '*') { dir_end = j; break; }
+						}
+						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
+						if (dir_end > 0)
+						{
+							String src_dir = src[:dir_end];
+							bool dup = false;
+							for (usz k = 0; k < result.count; k++)
+							{
+								if (result.dirs[k] == src_dir) { dup = true; break; }
+							}
+							if (!dup) result.dirs[result.count++] = src_dir;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (result.count == 0)
+	{
+		result.dirs[0] = "src";
+		result.dirs[1] = "lib";
+		result.count = 2;
+	}
+
+	// Always include unpacked c3l libraries
+	if (result.count < MAX_SEARCH_DIRS)
+	{
+		result.dirs[result.count++] = "build/unpacked_c3l";
+	}
+}
+
 // Tokenize content into a token list.
 fn void tokenize_content(String content, TokenList* tokens)
 {
@@ -191,87 +286,14 @@ fn String resolve_alias_in_dir(String dir_path, String type_name, int depth) @pr
 // Resolve alias by scanning project files on disk.
 fn String resolve_alias_in_project(String file_path, String type_name) @private
 {
-	String check_dir = parent_dir(file_path);
-	String project_root = "";
-	char[]? project_json_data;
-	for (int depth = 0; depth < 10; depth++)
-	{
-		if (check_dir.len == 0 || check_dir == "/") break;
-		DString pj = dstring::temp();
-		pj.appendf("%s/project.json", check_dir);
-		if (try data = file::load(mem, pj.str_view()))
-		{
-			project_root = check_dir;
-			project_json_data = data;
-			break;
-		}
-		check_dir = parent_dir(check_dir);
-	}
+	ProjectDirs pdirs;
+	get_project_search_dirs(file_path, &pdirs);
+	if (pdirs.project_root.len == 0) return "";
 
-	if (project_root.len == 0) return "";
-
-	const int MAX_SEARCH_DIRS = 32;
-	String[MAX_SEARCH_DIRS] search_dirs;
-	usz search_count = 0;
-
-	if (try data = project_json_data)
-	{
-		defer mem::free(data);
-		if (try pjson = json::tparse_string((String)data))
-		{
-			if (try deps = pjson.get("dependency-search-paths"))
-			{
-				usz deps_len = deps.get_len();
-				for (usz i = 0; i < deps_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = deps.get_at(i);
-					if (item == null) break;
-					if (item.is_string()) search_dirs[search_count++] = item.s;
-				}
-			}
-			if (try srcs = pjson.get("sources"))
-			{
-				usz srcs_len = srcs.get_len();
-				for (usz i = 0; i < srcs_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = srcs.get_at(i);
-					if (item == null) break;
-					if (item.is_string())
-					{
-						String src = item.s;
-						usz dir_end = src.len;
-						for (usz j = 0; j < src.len; j++)
-						{
-							if (src[j] == '*') { dir_end = j; break; }
-						}
-						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
-						if (dir_end > 0)
-						{
-							String src_dir = src[:dir_end];
-							bool dup = false;
-							for (usz k = 0; k < search_count; k++)
-							{
-								if (search_dirs[k] == src_dir) { dup = true; break; }
-							}
-							if (!dup) search_dirs[search_count++] = src_dir;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if (search_count == 0)
-	{
-		search_dirs[0] = "src";
-		search_dirs[1] = "lib";
-		search_count = 2;
-	}
-
-	for (usz i = 0; i < search_count; i++)
+	for (usz i = 0; i < pdirs.count; i++)
 	{
 		DString search_path = dstring::temp();
-		search_path.appendf("%s/%s", project_root, search_dirs[i]);
+		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
 		String resolved = resolve_alias_in_dir(search_path.str_view(), type_name, 0);
 		if (resolved.len > 0) return resolved;
 	}
@@ -534,116 +556,16 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 }
 
 // Scan project directories for a declaration on disk.
-// Reads project.json for dependency-search-paths and sources, then scans those dirs.
 fn bool? scan_project_files(String file_path, Token target, DString* out, String method_type = "") @private
 {
-	// Find project root by looking for project.json
-	String dir = parent_dir(file_path);
-	String project_root = "";
-	String check_dir = dir;
-	char[]? project_json_data;
-	for (int depth = 0; depth < 10; depth++)
-	{
-		if (check_dir.len == 0 || check_dir == "/") break;
-		DString pj = dstring::temp();
-		pj.appendf("%s/project.json", check_dir);
-		if (try data = file::load(mem, pj.str_view()))
-		{
-			project_root = check_dir;
-			project_json_data = data;
-			break;
-		}
-		check_dir = parent_dir(check_dir);
-	}
+	ProjectDirs pdirs;
+	get_project_search_dirs(file_path, &pdirs);
+	if (pdirs.project_root.len == 0) return false;
 
-	if (project_root.len == 0) return false;
-
-	// Parse project.json to find search paths
-	const int MAX_SEARCH_DIRS = 32;
-	String[MAX_SEARCH_DIRS] search_dirs;
-	usz search_count = 0;
-
-	if (try data = project_json_data)
-	{
-		defer mem::free(data);
-		if (try pjson = json::tparse_string((String)data))
-		{
-			// Extract dependency-search-paths (e.g. ["lib"])
-			if (try deps = pjson.get("dependency-search-paths"))
-			{
-				usz deps_len = deps.get_len();
-				for (usz i = 0; i < deps_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = deps.get_at(i);
-					if (item == null) break;
-					if (item.is_string())
-					{
-						search_dirs[search_count++] = item.s;
-					}
-				}
-			}
-
-			// Extract source directories from sources (e.g. ["src/**"])
-			if (try srcs = pjson.get("sources"))
-			{
-				usz srcs_len = srcs.get_len();
-				for (usz i = 0; i < srcs_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = srcs.get_at(i);
-					if (item == null) break;
-					if (item.is_string())
-					{
-						// Strip glob suffixes like /** or /*.c3
-						String src = item.s;
-						// Find the directory part before any glob
-						usz dir_end = src.len;
-						for (usz j = 0; j < src.len; j++)
-						{
-							if (src[j] == '*')
-							{
-								dir_end = j;
-								break;
-							}
-						}
-						// Remove trailing slash
-						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
-						if (dir_end > 0)
-						{
-							String src_dir = src[:dir_end];
-							// Avoid duplicates
-							bool dup = false;
-							for (usz k = 0; k < search_count; k++)
-							{
-								if (search_dirs[k] == src_dir)
-								{
-									dup = true;
-									break;
-								}
-							}
-							if (!dup)
-							{
-								search_dirs[search_count++] = src_dir;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Fallback if nothing was found in project.json
-	if (search_count == 0)
-	{
-		search_dirs[0] = "src";
-		search_dirs[1] = "lib";
-		search_count = 2;
-	}
-
-	// Scan each search directory
-	for (usz i = 0; i < search_count; i++)
+	for (usz i = 0; i < pdirs.count; i++)
 	{
 		DString search_path = dstring::temp();
-		search_path.appendf("%s/%s", project_root, search_dirs[i]);
+		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
 		if (scan_dir_recursive(search_path.str_view(), target, out, 0, method_type))
 		{
 			return true;

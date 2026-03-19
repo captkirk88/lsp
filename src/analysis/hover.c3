@@ -4,8 +4,6 @@ import std::core::dstring;
 import std::core::mem;
 import std::io::file;
 import std::io::path;
-import std::encoding::json;
-import std::collections::object;
 import c3::lexer;
 
 fn void encode_hover(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, DString* out)
@@ -413,96 +411,14 @@ fn String strip_comment_markers(String text) @private
 // Scan project dirs for hover docs (mirrors scan_project_files pattern).
 fn bool scan_project_docs(String file_path, Token target, DString* out, String method_type = "") @private
 {
-	String dir = parent_dir(file_path);
-	String project_root = "";
-	String check_dir = dir;
-	char[]? project_json_data;
-	for (int depth = 0; depth < 10; depth++)
-	{
-		if (check_dir.len == 0 || check_dir == "/") break;
-		DString pj = dstring::temp();
-		pj.appendf("%s/project.json", check_dir);
-		if (try data = file::load(mem, pj.str_view()))
-		{
-			project_root = check_dir;
-			project_json_data = data;
-			break;
-		}
-		check_dir = parent_dir(check_dir);
-	}
+	ProjectDirs pdirs;
+	get_project_search_dirs(file_path, &pdirs);
+	if (pdirs.project_root.len == 0) return false;
 
-	if (project_root.len == 0) return false;
-
-	const int MAX_SEARCH_DIRS = 32;
-	String[MAX_SEARCH_DIRS] search_dirs;
-	usz search_count = 0;
-
-	if (try data = project_json_data)
-	{
-		defer mem::free(data);
-		if (try pjson = json::tparse_string((String)data))
-		{
-			if (try deps = pjson.get("dependency-search-paths"))
-			{
-				usz deps_len = deps.get_len();
-				for (usz i = 0; i < deps_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = deps.get_at(i);
-					if (item == null) break;
-					if (item.is_string()) search_dirs[search_count++] = item.s;
-				}
-			}
-			if (try srcs = pjson.get("sources"))
-			{
-				usz srcs_len = srcs.get_len();
-				for (usz i = 0; i < srcs_len && search_count < MAX_SEARCH_DIRS; i++)
-				{
-					Object* item = srcs.get_at(i);
-					if (item == null) break;
-					if (item.is_string())
-					{
-						String src = item.s;
-						usz dir_end = src.len;
-						for (usz j = 0; j < src.len; j++)
-						{
-							if (src[j] == '*')
-							{
-								dir_end = j;
-								break;
-							}
-						}
-						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
-						if (dir_end > 0)
-						{
-							String src_dir = src[:dir_end];
-							bool dup = false;
-							for (usz k = 0; k < search_count; k++)
-							{
-								if (search_dirs[k] == src_dir)
-								{
-									dup = true;
-									break;
-								}
-							}
-							if (!dup) search_dirs[search_count++] = src_dir;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if (search_count == 0)
-	{
-		search_dirs[0] = "src";
-		search_dirs[1] = "lib";
-		search_count = 2;
-	}
-
-	for (usz i = 0; i < search_count; i++)
+	for (usz i = 0; i < pdirs.count; i++)
 	{
 		DString search_path = dstring::temp();
-		search_path.appendf("%s/%s", project_root, search_dirs[i]);
+		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
 		if (scan_dir_docs(search_path.str_view(), target, out, 0, method_type)) return true;
 	}
 	return false;

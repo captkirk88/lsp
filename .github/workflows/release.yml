@@ -68,9 +68,9 @@ jobs:
 
       - name: Install C3 Compiler
         run: |
-          mkdir -p /opt/c3
-          curl -L "https://github.com/c3lang/c3c/releases/download/${{ env.C3_VERSION }}/c3-macos.tar.gz" | tar xz -C /opt/c3 --strip-components=1
-          echo "/opt/c3" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/c3"
+          curl -L "https://github.com/c3lang/c3c/releases/download/${{ env.C3_VERSION }}/c3-macos.tar.gz" | tar xz -C "$HOME/c3" --strip-components=1
+          echo "$HOME/c3" >> "$GITHUB_PATH"
 
       - name: Build macOS aarch64
         run: |

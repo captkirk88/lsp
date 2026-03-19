@@ -77,6 +77,263 @@ fn void emit_location(String uri, String content, Token tok, DString* out)
 	out.appendf(`","range":{"start":{"line":%d,"character":%d},"end":{"line":%d,"character":%d}}}`, line, col, line, end_col);
 }
 
+// Find the type name of a variable by scanning for TYPE_IDENT var_name patterns.
+fn String find_variable_type(TokenList* tokens, String var_name) @private
+{
+	for (usz i = 0; i + 1 < tokens.size; i++)
+	{
+		if (tokens.entries[i].type == TYPE_IDENT &&
+			tokens.entries[i + 1].type == IDENT && tokens.entries[i + 1].text == var_name)
+		{
+			if (i + 2 < tokens.size)
+			{
+				TokenType next = tokens.entries[i + 2].type;
+				if (next == EOS || next == EQ || next == COMMA || next == DOT)
+				{
+					return tokens.entries[i].text;
+				}
+			}
+		}
+	}
+	return "";
+}
+
+// Resolve a type alias to its base type name.
+// e.g. alias TokenList = List{Token} → "List"
+fn String resolve_type_alias(TokenList* tokens, String type_name) @private
+{
+	for (usz i = 0; i + 3 < tokens.size; i++)
+	{
+		if (tokens.entries[i].type == ALIAS &&
+			tokens.entries[i + 1].type == TYPE_IDENT && tokens.entries[i + 1].text == type_name &&
+			tokens.entries[i + 2].type == EQ &&
+			tokens.entries[i + 3].type == TYPE_IDENT)
+		{
+			return tokens.entries[i + 3].text;
+		}
+	}
+	return "";
+}
+
+// Resolve a type alias searching current tokens + all open documents.
+fn String resolve_type_alias_across(TokenList* tokens, String type_name, DocumentList* docs) @private
+{
+	String resolved = resolve_type_alias(tokens, type_name);
+	if (resolved.len > 0) return resolved;
+
+	for (usz d = 0; d < docs.size; d++)
+	{
+		TokenList doc_tokens;
+		doc_tokens.init(mem);
+		tokenize_content(docs.entries[d].content, &doc_tokens);
+		resolved = resolve_type_alias(&doc_tokens, type_name);
+		doc_tokens.free();
+		if (resolved.len > 0) return resolved;
+	}
+	return "";
+}
+
+// Recursively scan a directory for an alias definition.
+fn String resolve_alias_in_dir(String dir_path, String type_name, int depth) @private
+{
+	if (depth > MAX_SCAN_DEPTH) return "";
+
+	Path p;
+	if (try pp = path::temp(dir_path)) { p = pp; } else { return ""; }
+	PathList entries;
+	if (try el = path::ls(mem, p)) { entries = el; } else { return ""; }
+	defer
+	{
+		foreach (&e : entries) e.free();
+		entries.free();
+	}
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				TokenList tokens;
+				tokens.init(mem);
+				tokenize_content((String)file_content, &tokens);
+				String resolved = resolve_type_alias(&tokens, type_name);
+				if (resolved.len > 0)
+				{
+					// Copy before freeing — resolved points into file_content
+					DString copy = dstring::temp();
+					copy.append(resolved);
+					tokens.free();
+					mem::free(file_content);
+					return copy.str_view();
+				}
+				tokens.free();
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			String resolved = resolve_alias_in_dir(full_path, type_name, depth + 1);
+			if (resolved.len > 0) return resolved;
+		}
+	}
+	return "";
+}
+
+// Resolve alias by scanning project files on disk.
+fn String resolve_alias_in_project(String file_path, String type_name) @private
+{
+	String check_dir = parent_dir(file_path);
+	String project_root = "";
+	char[]? project_json_data;
+	for (int depth = 0; depth < 10; depth++)
+	{
+		if (check_dir.len == 0 || check_dir == "/") break;
+		DString pj = dstring::temp();
+		pj.appendf("%s/project.json", check_dir);
+		if (try data = file::load(mem, pj.str_view()))
+		{
+			project_root = check_dir;
+			project_json_data = data;
+			break;
+		}
+		check_dir = parent_dir(check_dir);
+	}
+
+	if (project_root.len == 0) return "";
+
+	const int MAX_SEARCH_DIRS = 32;
+	String[MAX_SEARCH_DIRS] search_dirs;
+	usz search_count = 0;
+
+	if (try data = project_json_data)
+	{
+		defer mem::free(data);
+		if (try pjson = json::tparse_string((String)data))
+		{
+			if (try deps = pjson.get("dependency-search-paths"))
+			{
+				usz deps_len = deps.get_len();
+				for (usz i = 0; i < deps_len && search_count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = deps.get_at(i);
+					if (item == null) break;
+					if (item.is_string()) search_dirs[search_count++] = item.s;
+				}
+			}
+			if (try srcs = pjson.get("sources"))
+			{
+				usz srcs_len = srcs.get_len();
+				for (usz i = 0; i < srcs_len && search_count < MAX_SEARCH_DIRS; i++)
+				{
+					Object* item = srcs.get_at(i);
+					if (item == null) break;
+					if (item.is_string())
+					{
+						String src = item.s;
+						usz dir_end = src.len;
+						for (usz j = 0; j < src.len; j++)
+						{
+							if (src[j] == '*') { dir_end = j; break; }
+						}
+						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
+						if (dir_end > 0)
+						{
+							String src_dir = src[:dir_end];
+							bool dup = false;
+							for (usz k = 0; k < search_count; k++)
+							{
+								if (search_dirs[k] == src_dir) { dup = true; break; }
+							}
+							if (!dup) search_dirs[search_count++] = src_dir;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (search_count == 0)
+	{
+		search_dirs[0] = "src";
+		search_dirs[1] = "lib";
+		search_count = 2;
+	}
+
+	for (usz i = 0; i < search_count; i++)
+	{
+		DString search_path = dstring::temp();
+		search_path.appendf("%s/%s", project_root, search_dirs[i]);
+		String resolved = resolve_alias_in_dir(search_path.str_view(), type_name, 0);
+		if (resolved.len > 0) return resolved;
+	}
+	return "";
+}
+
+// 4-step definition search: current file -> open docs -> project files -> stdlib.
+// Returns true if a definition was found and emitted.
+fn bool try_find_definition(
+	TokenList* tokens, Token cursor_tok, usz cursor_idx,
+	String uri, String content, DocumentList* docs, String stdlib_path,
+	DString* out, String method_type = "") @private
+{
+	// 1. Search current file
+	usz decl_idx = find_declaration(tokens, cursor_tok, cursor_idx, method_type);
+	if (decl_idx < tokens.size && decl_idx != cursor_idx)
+	{
+		emit_location(uri, content, tokens.entries[decl_idx], out);
+		return true;
+	}
+
+	// 2. Search all other open documents
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (docs.entries[d].uri == uri) continue;
+
+		TokenList other_tokens;
+		other_tokens.init(mem);
+		tokenize_content(docs.entries[d].content, &other_tokens);
+
+		usz found = find_declaration_in(&other_tokens, cursor_tok, method_type);
+		if (found < other_tokens.size)
+		{
+			emit_location(docs.entries[d].uri, docs.entries[d].content, other_tokens.entries[found], out);
+			other_tokens.free();
+			return true;
+		}
+		other_tokens.free();
+	}
+
+	// 3. Scan project files on disk (src/ and lib/ relative to file)
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		if (try found = scan_project_files(file_path, cursor_tok, out, method_type))
+		{
+			if (found) return true;
+		}
+	}
+
+	// 4. Scan stdlib path
+	if (stdlib_path.len > 0)
+	{
+		if (scan_dir_recursive(stdlib_path, cursor_tok, out, 0, method_type))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 // Encodes a go-to-definition / go-to-declaration response.
 // Searches: current file -> open documents -> project files on disk -> stdlib.
 fn void encode_definition(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, DString* out)
@@ -95,63 +352,61 @@ fn void encode_definition(String uri, String content, usz offset, DocumentList* 
 	TokenType ct = cursor_tok.type;
 	if (ct != IDENT && ct != TYPE_IDENT && ct != CONST_IDENT) return;
 
-	// 1. Search current file
-	usz decl_idx = find_declaration(&tokens, cursor_tok, cursor_idx);
-	if (decl_idx < tokens.size && decl_idx != cursor_idx)
+	// Method call resolution: variable.method(
+	if (ct == IDENT && cursor_idx >= 2 &&
+		tokens.entries[cursor_idx - 1].type == DOT &&
+		tokens.entries[cursor_idx - 2].type == IDENT)
 	{
-		emit_location(uri, content, tokens.entries[decl_idx], out);
-		return;
-	}
-
-	// 2. Search all other open documents
-	for (usz d = 0; d < docs.size; d++)
-	{
-		if (docs.entries[d].uri == uri) continue;
-
-		TokenList other_tokens;
-		other_tokens.init(mem);
-		tokenize_content(docs.entries[d].content, &other_tokens);
-
-		usz found = find_declaration_in(&other_tokens, cursor_tok);
-		if (found < other_tokens.size)
+		String receiver_name = tokens.entries[cursor_idx - 2].text;
+		String type_name = find_variable_type(&tokens, receiver_name);
+		if (type_name.len > 0)
 		{
-			emit_location(docs.entries[d].uri, docs.entries[d].content, other_tokens.entries[found], out);
-			other_tokens.free();
-			return;
+			// Resolve alias FIRST (cheap: current file + open docs)
+			String resolved = resolve_type_alias_across(&tokens, type_name, docs);
+
+			// If not found in open docs, scan project files for alias
+			if (resolved.len == 0)
+			{
+				String file_path = uri_to_path(uri);
+				if (file_path.len > 0)
+				{
+					resolved = resolve_alias_in_project(file_path, type_name);
+				}
+			}
+
+			// Search with resolved alias type first (most likely to succeed)
+			if (resolved.len > 0 && resolved != type_name)
+			{
+				if (try_find_definition(&tokens, cursor_tok, cursor_idx, uri, content, docs, stdlib_path, out, resolved))
+				{
+					return;
+				}
+			}
+
+			// Fallback: try direct type name
+			if (try_find_definition(&tokens, cursor_tok, cursor_idx, uri, content, docs, stdlib_path, out, type_name))
+			{
+				return;
+			}
 		}
-		other_tokens.free();
+		// Fall through to regular search if method resolution failed
 	}
 
-	// 3. Scan project files on disk (src/ and lib/ relative to file)
-	String file_path = uri_to_path(uri);
-	if (file_path.len > 0)
-	{
-		if (try found = scan_project_files(file_path, cursor_tok, out))
-		{
-			if (found) return;
-		}
-	}
-
-	// 4. Scan stdlib path
-	if (stdlib_path.len > 0)
-	{
-		if (scan_dir_recursive(stdlib_path, cursor_tok, out, 0))
-		{
-			return;
-		}
-	}
+	// Regular search (non-method)
+	try_find_definition(&tokens, cursor_tok, cursor_idx, uri, content, docs, stdlib_path, out);
 }
 
 // Search for a declaration in a token stream (not tied to a cursor position).
-fn usz find_declaration_in(TokenList* tokens, Token target) @private
+fn usz find_declaration_in(TokenList* tokens, Token target, String method_type = "") @private
 {
-	return find_declaration(tokens, target, tokens.size); // pass impossible cursor_idx
+	return find_declaration(tokens, target, tokens.size, method_type); // pass impossible cursor_idx
 }
 
 // Searches for the declaration of a token in the token stream.
 // Returns the index of the name token at the declaration site,
 // or tokens.size if not found.
-fn usz find_declaration(TokenList* tokens, Token target, usz target_idx) @private
+// When method_type is non-empty, searches for fn Type.name( pattern only.
+fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String method_type = "") @private
 {
 	String name = target.text;
 
@@ -207,6 +462,30 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx) @privat
 				}
 			}
 		case IDENT:
+			if (method_type.len > 0)
+			{
+				// Search for fn ... Type.method( pattern only
+				for (usz i = 0; i < tokens.size; i++)
+				{
+					if (tokens.entries[i].type != FUNC) continue;
+					for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
+					{
+						if (tokens.entries[j].type == LPAREN)
+						{
+							if (j >= 3 &&
+								tokens.entries[j - 1].type == IDENT && tokens.entries[j - 1].text == name &&
+								tokens.entries[j - 2].type == DOT &&
+								tokens.entries[j - 3].type == TYPE_IDENT && tokens.entries[j - 3].text == method_type)
+							{
+								return j - 1;
+							}
+							break;
+						}
+						if (tokens.entries[j].type == LBRACE || tokens.entries[j].type == EOS) break;
+					}
+				}
+				return tokens.size;
+			}
 			// fn ... name(
 			for (usz i = 0; i < tokens.size; i++)
 			{
@@ -256,7 +535,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx) @privat
 
 // Scan project directories for a declaration on disk.
 // Reads project.json for dependency-search-paths and sources, then scans those dirs.
-fn bool? scan_project_files(String file_path, Token target, DString* out) @private
+fn bool? scan_project_files(String file_path, Token target, DString* out, String method_type = "") @private
 {
 	// Find project root by looking for project.json
 	String dir = parent_dir(file_path);
@@ -365,7 +644,7 @@ fn bool? scan_project_files(String file_path, Token target, DString* out) @priva
 	{
 		DString search_path = dstring::temp();
 		search_path.appendf("%s/%s", project_root, search_dirs[i]);
-		if (scan_dir_recursive(search_path.str_view(), target, out, 0))
+		if (scan_dir_recursive(search_path.str_view(), target, out, 0, method_type))
 		{
 			return true;
 		}
@@ -375,7 +654,7 @@ fn bool? scan_project_files(String file_path, Token target, DString* out) @priva
 
 const int MAX_SCAN_DEPTH = 5;
 
-fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int depth) @private
+fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int depth, String method_type = "") @private
 {
 	if (depth > MAX_SCAN_DEPTH) return false;
 
@@ -425,7 +704,7 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 				tokens.init(mem);
 				tokenize_content(content, &tokens);
 
-				usz found = find_declaration_in(&tokens, target);
+				usz found = find_declaration_in(&tokens, target, method_type);
 				if (found < tokens.size)
 				{
 					// Build file:// URI from path
@@ -443,7 +722,7 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 		else
 		{
 			// Try to recurse into subdirectories
-			if (scan_dir_recursive(full_path, target, out, depth + 1))
+			if (scan_dir_recursive(full_path, target, out, depth + 1, method_type))
 			{
 				return true;
 			}

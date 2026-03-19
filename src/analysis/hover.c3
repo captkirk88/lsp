@@ -29,7 +29,55 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 				if (ct == IDENT || ct == TYPE_IDENT || ct == CONST_IDENT)
 				{
 					DString doc = dstring::temp();
-					find_hover_docs(uri, content, tok, docs, stdlib_path, &doc);
+
+					// Detect method call context for hover
+					if (ct == IDENT)
+					{
+						TokenList hover_tokens;
+						hover_tokens.init(mem);
+						tokenize_content(content, &hover_tokens);
+						Token hover_tok;
+						usz hover_idx;
+						if (find_token_at(&hover_tokens, offset, &hover_tok, &hover_idx))
+						{
+							if (hover_idx >= 2 &&
+								hover_tokens.entries[hover_idx - 1].type == DOT &&
+								hover_tokens.entries[hover_idx - 2].type == IDENT)
+							{
+								String receiver_name = hover_tokens.entries[hover_idx - 2].text;
+								String type_name = find_variable_type(&hover_tokens, receiver_name);
+								if (type_name.len > 0)
+								{
+									// Try resolved alias first (e.g. List for TokenList)
+									String resolved = resolve_type_alias_across(&hover_tokens, type_name, docs);
+									if (resolved.len == 0)
+									{
+										String hover_file_path = uri_to_path(uri);
+										if (hover_file_path.len > 0)
+										{
+											resolved = resolve_alias_in_project(hover_file_path, type_name);
+										}
+									}
+									if (resolved.len > 0 && resolved != type_name)
+									{
+										find_hover_docs(uri, content, tok, docs, stdlib_path, &doc, resolved);
+									}
+									// Try direct type if alias didn't find it
+									if (doc.str_view().len == 0)
+									{
+										find_hover_docs(uri, content, tok, docs, stdlib_path, &doc, type_name);
+									}
+								}
+							}
+						}
+						hover_tokens.free();
+					}
+
+					// Regular (non-method) hover if method resolution didn't find anything
+					if (doc.str_view().len == 0)
+					{
+						find_hover_docs(uri, content, tok, docs, stdlib_path, &doc);
+					}
 
 					if (doc.str_view().len > 0)
 					{
@@ -72,8 +120,29 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 
 // Search for the declaration of a token and extract its doc comment + signature.
 // Searches: current file -> open documents -> project files -> stdlib.
-fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentList* docs, String stdlib_path, DString* out) @private
+fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentList* docs, String stdlib_path, DString* out, String method_type = "") @private
 {
+	// If method type specified, try method-specific search first with each type candidate
+	if (method_type.len > 0)
+	{
+		if (try_extract_docs_from(content, cursor_tok, out, method_type)) return;
+		for (usz d = 0; d < docs.size; d++)
+		{
+			if (docs.entries[d].uri == uri) continue;
+			if (try_extract_docs_from(docs.entries[d].content, cursor_tok, out, method_type)) return;
+		}
+		String file_path = uri_to_path(uri);
+		if (file_path.len > 0)
+		{
+			if (scan_project_docs(file_path, cursor_tok, out, method_type)) return;
+		}
+		if (stdlib_path.len > 0)
+		{
+			if (scan_dir_docs(stdlib_path, cursor_tok, out, 0, method_type)) return;
+		}
+		return;
+	}
+
 	// 1. Current file
 	if (try_extract_docs_from(content, cursor_tok, out)) return;
 
@@ -99,14 +168,14 @@ fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentLi
 }
 
 // Tokenize content, find the declaration of target, and extract doc comment + signature.
-fn bool try_extract_docs_from(String content, Token target, DString* out) @private
+fn bool try_extract_docs_from(String content, Token target, DString* out, String method_type = "") @private
 {
 	TokenList tokens;
 	tokens.init(mem);
 	defer tokens.free();
 	tokenize_content(content, &tokens);
 
-	usz decl_idx = find_decl_for_hover(&tokens, target);
+	usz decl_idx = find_decl_for_hover(&tokens, target, method_type);
 	if (decl_idx >= tokens.size) return false;
 
 	extract_docs_at(content, &tokens, decl_idx, out);
@@ -114,7 +183,8 @@ fn bool try_extract_docs_from(String content, Token target, DString* out) @priva
 }
 
 // Find the declaration index — similar to find_declaration but also checks same-name at cursor.
-fn usz find_decl_for_hover(TokenList* tokens, Token target) @private
+// When method_type is non-empty, searches for fn Type.name( pattern only.
+fn usz find_decl_for_hover(TokenList* tokens, Token target, String method_type = "") @private
 {
 	String name = target.text;
 
@@ -140,6 +210,30 @@ fn usz find_decl_for_hover(TokenList* tokens, Token target) @private
 				}
 			}
 		case IDENT:
+			if (method_type.len > 0)
+			{
+				// Search for fn ... Type.method( pattern only
+				for (usz i = 0; i < tokens.size; i++)
+				{
+					if (tokens.entries[i].type != FUNC) continue;
+					for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
+					{
+						if (tokens.entries[j].type == LPAREN)
+						{
+							if (j >= 3 &&
+								tokens.entries[j - 1].type == IDENT && tokens.entries[j - 1].text == name &&
+								tokens.entries[j - 2].type == DOT &&
+								tokens.entries[j - 3].type == TYPE_IDENT && tokens.entries[j - 3].text == method_type)
+							{
+								return j - 1;
+							}
+							break;
+						}
+						if (tokens.entries[j].type == LBRACE || tokens.entries[j].type == EOS) break;
+					}
+				}
+				return tokens.size;
+			}
 			// fn ... name(
 			for (usz i = 0; i < tokens.size; i++)
 			{
@@ -317,7 +411,7 @@ fn String strip_comment_markers(String text) @private
 }
 
 // Scan project dirs for hover docs (mirrors scan_project_files pattern).
-fn bool scan_project_docs(String file_path, Token target, DString* out) @private
+fn bool scan_project_docs(String file_path, Token target, DString* out, String method_type = "") @private
 {
 	String dir = parent_dir(file_path);
 	String project_root = "";
@@ -409,12 +503,12 @@ fn bool scan_project_docs(String file_path, Token target, DString* out) @private
 	{
 		DString search_path = dstring::temp();
 		search_path.appendf("%s/%s", project_root, search_dirs[i]);
-		if (scan_dir_docs(search_path.str_view(), target, out, 0)) return true;
+		if (scan_dir_docs(search_path.str_view(), target, out, 0, method_type)) return true;
 	}
 	return false;
 }
 
-fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth) @private
+fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth, String method_type = "") @private
 {
 	if (depth > MAX_SCAN_DEPTH) return false;
 
@@ -457,12 +551,12 @@ fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth) @p
 			if (try file_content = file::load(mem, full_path))
 			{
 				defer mem::free(file_content);
-				if (try_extract_docs_from((String)file_content, target, out)) return true;
+				if (try_extract_docs_from((String)file_content, target, out, method_type)) return true;
 			}
 		}
 		else
 		{
-			if (scan_dir_docs(full_path, target, out, depth + 1)) return true;
+			if (scan_dir_docs(full_path, target, out, depth + 1, method_type)) return true;
 		}
 	}
 	return false;

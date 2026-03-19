@@ -136,3 +136,57 @@ fn void test_definition_cross_file() @test {
 
 	ds.close("file:///other.c3");
 }
+
+fn void test_definition_method_call_same_file() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	// File has a struct, a method on it, and a call site
+	String content = "struct Foo {}\nfn void Foo.init(&self) {}\nFoo f;\nf.init();";
+	// "f.init()" — cursor on "init" at offset 50
+	encode_definition("file:///test.c3", content, 50, ds, "", &out);
+	String result = out.str_view();
+	// Should navigate to "init" in "fn void Foo.init" (line 1, character 12)
+	assert(result.contains(`"line":1`), "got: %s", result);
+	assert(result.contains(`"character":12`), "got: %s", result);
+}
+
+fn void test_definition_method_call_cross_file() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	// Method declaration in another file
+	ds.open("file:///foo.c3", "struct Foo {}\nfn void Foo.start(&self) {}", 1);
+
+	// Current file uses the method
+	String content = "Foo f;\nf.start();";
+	// "f.start()" — cursor on "start" at offset 9
+	encode_definition("file:///test.c3", content, 9, ds, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`file:///foo.c3`), "got: %s", result);
+	assert(result.contains(`"line":1`), "got: %s", result);
+	assert(result.contains(`"character":12`), "got: %s", result);
+
+	ds.close("file:///foo.c3");
+}
+
+fn void test_definition_method_call_alias_resolved() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	// Alias definition in one file, method on the base type in another
+	ds.open("file:///types.c3", "alias MyList = BaseList;", 1);
+	ds.open("file:///base.c3", "struct BaseList {}\nfn void BaseList.push(&self) {}", 1);
+
+	// Current file uses the alias type and calls the method
+	String content = "MyList items;\nitems.push();";
+	// "items.push()" — cursor on "push" at offset 20
+	encode_definition("file:///test.c3", content, 20, ds, "", &out);
+	String result = out.str_view();
+	// Should resolve MyList -> BaseList, then find fn BaseList.push
+	assert(result.contains(`file:///base.c3`), "got: %s", result);
+	assert(result.contains(`"character":17`), "got: %s", result);
+
+	ds.close("file:///types.c3");
+	ds.close("file:///base.c3");
+}

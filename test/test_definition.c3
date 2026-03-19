@@ -71,6 +71,30 @@ fn void test_definition_constdef() @test {
 	assert(result.contains(`"character":9`), "got: %s", result);
 }
 
+fn void test_definition_const_no_type() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	String content = "const FOO = 42;\nint x = FOO;";
+	// Cursor on "FOO" in usage at offset 24
+	encode_definition("file:///test.c3", content, 24, ds, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"line":0`), "got: %s", result);
+	assert(result.contains(`"character":6`), "got: %s", result);
+}
+
+fn void test_definition_const_with_type() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+	String content = "const usz BUFFER_SIZE = 1024;\nusz x = BUFFER_SIZE;";
+	// Cursor on "BUFFER_SIZE" in usage at offset 38
+	encode_definition("file:///test.c3", content, 38, ds, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"line":0`), "got: %s", result);
+	assert(result.contains(`"character":10`), "got: %s", result);
+}
+
 fn void test_definition_not_found() @test {
 	DString out = dstring::temp();
 	DocumentList* ds = mem::new(DocumentList);

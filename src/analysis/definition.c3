@@ -509,6 +509,21 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 					return i + 1;
 				}
 			}
+			// const [Type] NAME = ...
+			for (usz i = 0; i + 1 < tokens.size; i++)
+			{
+				if (tokens.entries[i].type != CONST) continue;
+				// const NAME = ... (no type)
+				if (tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
+				{
+					return i + 1;
+				}
+				// const Type NAME = ... (with type)
+				if (i + 2 < tokens.size && is_type_token(tokens.entries[i + 1].type) && tokens.entries[i + 2].type == CONST_IDENT && tokens.entries[i + 2].text == name)
+				{
+					return i + 2;
+				}
+			}
 			// enum member: enum Foo { NAME, ... }
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{

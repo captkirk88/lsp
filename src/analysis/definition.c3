@@ -17,6 +17,56 @@ struct ProjectDirs
 	usz count;
 }
 
+// Extract a directory from a source path and add it to search dirs.
+// Handles globs ("src/**"), individual files ("./helpers/context.c3"), and plain dirs ("src").
+fn void add_source_dir(String src, ProjectDirs* result) @private
+{
+	if (result.count >= MAX_SEARCH_DIRS) return;
+
+	usz dir_end = src.len;
+	for (usz j = 0; j < src.len; j++)
+	{
+		if (src[j] == '*') { dir_end = j; break; }
+	}
+	if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
+
+	// If path ends with .c3 or .c3i, extract the parent directory
+	if (dir_end >= 3)
+	{
+		String s = src[:dir_end];
+		if (s.ends_with(".c3") || s.ends_with(".c3i"))
+		{
+			// Find last '/'
+			usz last_slash = 0;
+			bool found_slash = false;
+			for (usz j = s.len; j > 0; j--)
+			{
+				if (s[j - 1] == '/') { last_slash = j - 1; found_slash = true; break; }
+			}
+			if (found_slash && last_slash > 0)
+			{
+				dir_end = last_slash;
+			}
+			else
+			{
+				// File in project root (e.g. "main.c3") — use "." as the dir
+				src = ".";
+				dir_end = 1;
+			}
+		}
+	}
+
+	if (dir_end == 0) return;
+	String src_dir = src[:dir_end];
+
+	// Dedup
+	for (usz k = 0; k < result.count; k++)
+	{
+		if (result.dirs[k] == src_dir) return;
+	}
+	result.dirs[result.count++] = src_dir;
+}
+
 // Find project root and collect all search directories from project.json.
 // Includes dependency-search-paths, sources dirs, and build/unpacked_c3l.
 fn void get_project_search_dirs(String file_path, ProjectDirs* result)
@@ -67,23 +117,28 @@ fn void get_project_search_dirs(String file_path, ProjectDirs* result)
 					if (item.is_string())
 					{
 						String src = item.s;
-						usz dir_end = src.len;
-						for (usz j = 0; j < src.len; j++)
-						{
-							if (src[j] == '*') { dir_end = j; break; }
-						}
-						if (dir_end > 0 && src[dir_end - 1] == '/') dir_end--;
-						if (dir_end > 0)
-						{
-							String src_dir = src[:dir_end];
-							bool dup = false;
-							for (usz k = 0; k < result.count; k++)
-							{
-								if (result.dirs[k] == src_dir) { dup = true; break; }
-							}
-							if (!dup) result.dirs[result.count++] = src_dir;
-						}
+						add_source_dir(src, result);
 					}
+				}
+			}
+			// Also collect sources from build targets (targets is a JSON object/map)
+			if (try targets = pjson.get("targets"))
+			{
+				if (targets.is_map())
+				{
+					targets.map.@each(; String key, Object* tgt) {
+						if (result.count >= MAX_SEARCH_DIRS) return;
+						if (try tgt_srcs = tgt.get("sources"))
+						{
+							usz ts_len = tgt_srcs.get_len();
+							for (usz i = 0; i < ts_len && result.count < MAX_SEARCH_DIRS; i++)
+							{
+								Object* item = tgt_srcs.get_at(i);
+								if (item == null) break;
+								if (item.is_string()) add_source_dir(item.s, result);
+							}
+						}
+					};
 				}
 			}
 		}

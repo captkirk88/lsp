@@ -2,6 +2,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -94,7 +95,30 @@ jobs:
           name: c3-lsp-macos-x86_64
           path: c3-lsp-macos-x86_64.zip
 
-  release:
+  release-latest:
+    if: github.ref == 'refs/heads/main'
+    needs: [build-linux-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build
+          prerelease: true
+          make_latest: false
+          files: |
+            c3-lsp-linux-x86_64/c3-lsp-linux-x86_64.zip
+            c3-lsp-windows-x86_64/c3-lsp-windows-x86_64.zip
+            c3-lsp-macos-aarch64/c3-lsp-macos-aarch64.zip
+            c3-lsp-macos-x86_64/c3-lsp-macos-x86_64.zip
+
+  release-tagged:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [build-linux-windows, build-macos]
     runs-on: ubuntu-latest

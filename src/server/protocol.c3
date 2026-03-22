@@ -15,18 +15,23 @@ struct LspServer
 	String compiler_path;
 	long diag_delay_ms;
 	Time last_diag_time;
+	SentryConfig sentry;
 }
 
-fn void LspServer.init(&self, String stdlib_path, String compiler_path, long diag_delay_ms)
+fn void LspServer.init(&self, String stdlib_path, String compiler_path, long diag_delay_ms, String sentry_dsn)
 {
-	*self = { .running = true, .stdlib_path = stdlib_path, .compiler_path = compiler_path, .diag_delay_ms = diag_delay_ms, };
+	*self = { .running = true, .stdlib_path = stdlib_path, .compiler_path = compiler_path, .diag_delay_ms = diag_delay_ms, .sentry = parse_sentry_dsn(sentry_dsn), };
 	self.documents.init(mem);
 }
 
 fn void handle_message(LspServer* server, String message)
 {
 	Object* msg = json::tparse_string(message) ?? null;
-	if (msg == null) return;
+	if (msg == null)
+	{
+		sentry_capture_error(&server.sentry, "Failed to parse JSON message", "unknown");
+		return;
+	}
 
 	// Extract id as raw JSON string for responses
 	String id_json = "null";

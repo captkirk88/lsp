@@ -43,6 +43,13 @@ fn void handle_initialize(LspServer* server, Object* msg, String id_json)
 		{
 			server.diag_delay_ms = delay;
 		}
+		String sentry = opts.get_string("sentryDsn") ?? "";
+		if (sentry.len > 0 && !server.sentry.enabled)
+		{
+			char[] copy = mem::new_array(char, sentry.len);
+			copy[..] = sentry[..];
+			server.sentry = parse_sentry_dsn((String)copy);
+		}
 	}
 
 	DString result = dstring::temp();

@@ -11,21 +11,55 @@ env:
   C3_VERSION: v0.7.10
 
 jobs:
-  build-linux-windows:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Cache C3 Compiler
+        id: cache-c3-linux
+        uses: actions/cache@v4
+        with:
+          path: /opt/c3
+          key: c3-linux-${{ env.C3_VERSION }}
+
       - name: Install C3 Compiler
+        if: steps.cache-c3-linux.outputs.cache-hit != 'true'
         run: |
           mkdir -p /opt/c3
           curl -L "https://github.com/c3lang/c3c/releases/download/${{ env.C3_VERSION }}/c3-linux.tar.gz" | tar xz -C /opt/c3 --strip-components=1
-          echo "/opt/c3" >> "$GITHUB_PATH"
+
+      - name: Add C3 to PATH
+        run: echo "/opt/c3" >> "$GITHUB_PATH"
 
       - name: Run Tests
         run: c3c test lsp
+
+  build-linux-windows:
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache C3 Compiler
+        id: cache-c3-linux
+        uses: actions/cache@v4
+        with:
+          path: /opt/c3
+          key: c3-linux-${{ env.C3_VERSION }}
+
+      - name: Install C3 Compiler
+        if: steps.cache-c3-linux.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /opt/c3
+          curl -L "https://github.com/c3lang/c3c/releases/download/${{ env.C3_VERSION }}/c3-linux.tar.gz" | tar xz -C /opt/c3 --strip-components=1
+
+      - name: Add C3 to PATH
+        run: echo "/opt/c3" >> "$GITHUB_PATH"
 
       - name: Build Linux x86_64
         run: |
@@ -61,17 +95,28 @@ jobs:
           path: c3-lsp-windows-x86_64.zip
 
   build-macos:
+    needs: [test]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Cache C3 Compiler
+        id: cache-c3-macos
+        uses: actions/cache@v4
+        with:
+          path: ~/c3
+          key: c3-macos-${{ env.C3_VERSION }}
+
       - name: Install C3 Compiler
+        if: steps.cache-c3-macos.outputs.cache-hit != 'true'
         run: |
           curl -L -o /tmp/c3-macos.zip "https://github.com/c3lang/c3c/releases/download/${{ env.C3_VERSION }}/c3-macos.zip"
           unzip -o /tmp/c3-macos.zip -d "$HOME"
-          echo "$HOME/c3" >> "$GITHUB_PATH"
+
+      - name: Add C3 to PATH
+        run: echo "$HOME/c3" >> "$GITHUB_PATH"
 
       - name: Build macOS aarch64
         run: |

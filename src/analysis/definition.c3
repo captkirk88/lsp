@@ -239,10 +239,10 @@ fn bool find_token_at(TokenList* tokens, usz offset, Token* result, usz* idx)
 {
 	for (usz i = 0; i < tokens.size; i++)
 	{
-		usz tok_end = tokens.entries[i].offset + tokens.entries[i].len;
-		if (tokens.entries[i].offset <= offset && offset < tok_end)
+		usz tok_end = tokens.get(i).offset + tokens.get(i).len;
+		if (tokens.get(i).offset <= offset && offset < tok_end)
 		{
-			*result = tokens.entries[i];
+			*result = tokens.get(i);
 			*idx = i;
 			return true;
 		}
@@ -254,10 +254,10 @@ fn bool find_token_at(TokenList* tokens, usz offset, Token* result, usz* idx)
 		usz adj = offset - 1;
 		for (usz i = 0; i < tokens.size; i++)
 		{
-			usz tok_end = tokens.entries[i].offset + tokens.entries[i].len;
-			if (tokens.entries[i].offset <= adj && adj < tok_end)
+			usz tok_end = tokens.get(i).offset + tokens.get(i).len;
+			if (tokens.get(i).offset <= adj && adj < tok_end)
 			{
-				*result = tokens.entries[i];
+				*result = tokens.get(i);
 				*idx = i;
 				return true;
 			}
@@ -344,7 +344,7 @@ fn String find_variable_type(TokenList* tokens, String var_name) @private
 {
 	for (usz i = 0; i + 1 < tokens.size; i++)
 	{
-		if (tokens.entries[i].type == TYPE_IDENT &&
+		if (tokens.get(i).type == TYPE_IDENT &&
 			is_ident(tokens.entries[i + 1].type) && tokens.entries[i + 1].text == var_name)
 		{
 			if (i + 2 < tokens.size)
@@ -352,7 +352,7 @@ fn String find_variable_type(TokenList* tokens, String var_name) @private
 				TokenType next = tokens.entries[i + 2].type;
 				if (next == EOS || next == EQ || next == COMMA || next == DOT)
 				{
-					return tokens.entries[i].text;
+					return tokens.get(i).text;
 				}
 			}
 		}
@@ -366,7 +366,7 @@ fn String resolve_type_alias(TokenList* tokens, String type_name) @private
 {
 	for (usz i = 0; i + 3 < tokens.size; i++)
 	{
-		if (tokens.entries[i].type == ALIAS &&
+		if (tokens.get(i).type == ALIAS &&
 			tokens.entries[i + 1].type == TYPE_IDENT && tokens.entries[i + 1].text == type_name &&
 			tokens.entries[i + 2].type == EQ &&
 			tokens.entries[i + 3].type == TYPE_IDENT)
@@ -602,7 +602,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 		case TYPE_IDENT:
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				TokenType kw = tokens.entries[i].type;
+				TokenType kw = tokens.get(i).type;
 				if (is_type_declaration_keyword(kw))
 				{
 					if (tokens.entries[i + 1].type == TYPE_IDENT && tokens.entries[i + 1].text == name)
@@ -615,7 +615,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// constdef NAME
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens.entries[i].type == CONSTDEF && tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
+				if (tokens.get(i).type == CONSTDEF && tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
@@ -623,7 +623,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// const [Type] NAME = ...
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens.entries[i].type != CONST) continue;
+				if (tokens.get(i).type != CONST) continue;
 				// const NAME = ... (no type)
 				if (tokens.entries[i + 1].type == CONST_IDENT && tokens.entries[i + 1].text == name)
 				{
@@ -638,7 +638,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// enum member: enum Foo { NAME, ... }
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens.entries[i].type != ENUM && tokens.entries[i].type != FAULTDEF) continue;
+				if (tokens.get(i).type != ENUM && tokens.get(i).type != FAULTDEF) continue;
 				// Find the opening brace
 				usz brace = i + 1;
 				while (brace < tokens.size && tokens.entries[brace].type != LBRACE) brace++;
@@ -670,7 +670,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 				// Search for fn ... Type.method( pattern only
 				for (usz i = 0; i < tokens.size; i++)
 				{
-					if (tokens.entries[i].type != FUNC && tokens.entries[i].type != MACRO) continue;
+					if (tokens.get(i).type != FUNC && tokens.get(i).type != MACRO) continue;
 					for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
 					{
 						if (tokens.entries[j].type == LPAREN)
@@ -692,7 +692,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// fn ... name( or macro ... name(
 			for (usz i = 0; i < tokens.size; i++)
 			{
-				if (tokens.entries[i].type != FUNC && tokens.entries[i].type != MACRO) continue;
+				if (tokens.get(i).type != FUNC && tokens.get(i).type != MACRO) continue;
 				for (usz j = i + 1; j < tokens.size && j < i + 64; j++)
 				{
 					if (tokens.entries[j].type == LPAREN)
@@ -709,7 +709,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// macro name (no parens)
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (tokens.entries[i].type == MACRO && is_ident(tokens.entries[i + 1].type) && tokens.entries[i + 1].text == name)
+				if (tokens.get(i).type == MACRO && is_ident(tokens.entries[i + 1].type) && tokens.entries[i + 1].text == name)
 				{
 					return i + 1;
 				}
@@ -717,7 +717,7 @@ fn usz find_declaration(TokenList* tokens, Token target, usz target_idx, String 
 			// type IDENT = ...
 			for (usz i = 0; i + 1 < tokens.size; i++)
 			{
-				if (is_type_token(tokens.entries[i].type) && is_ident(tokens.entries[i + 1].type) && tokens.entries[i + 1].text == name)
+				if (is_type_token(tokens.get(i).type) && is_ident(tokens.entries[i + 1].type) && tokens.entries[i + 1].text == name)
 				{
 					if (i + 2 < tokens.size)
 					{

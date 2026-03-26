@@ -259,7 +259,7 @@ fn void LspServer.handle_completion(&self, Object* msg, String id_json)
 	}
 
 	DString data = dstring::temp();
-	encode_completions(doc.content, offset, &data);
+	encode_completions(uri, doc.content, offset, &self.documents, self.stdlib_path, &data);
 	send_response(id_json, data.str_view());
 }
 

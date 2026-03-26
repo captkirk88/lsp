@@ -222,11 +222,12 @@ fn bool try_extract_field_docs_from(String content, String type_name, String fie
 	TokenStream stream = token_stream_tokenize(content);
 	defer stream.free();
 
-	usz found = stream.tokens.find_struct_field(type_name, field_name);
-	if (found >= stream.tokens.size) return false;
-
-	stream.tokens.extract_docs_at(content, found, out);
-	return out.str_view().len > 0;
+	if (try found = stream.tokens.find_struct_field(type_name, field_name))
+	{
+		stream.tokens.extract_docs_at(content, found, out);
+		return out.str_view().len > 0;
+	}
+	return false;
 }
 
 // Tokenize content, find the declaration of target, and extract doc comment + signature.
@@ -235,11 +236,12 @@ fn bool try_extract_docs_from(String content, Token target, DString* out, String
 	TokenStream stream = token_stream_tokenize(content);
 	defer stream.free();
 
-	usz decl_idx = stream.tokens.find_declaration_in(target, method_type);
-	if (decl_idx >= stream.tokens.size) return false;
-
-	stream.tokens.extract_docs_at(content, decl_idx, out);
-	return out.str_view().len > 0;
+	if (try decl_idx = stream.tokens.find_declaration_in(target, method_type))
+	{
+		stream.tokens.extract_docs_at(content, decl_idx, out);
+		return out.str_view().len > 0;
+	}
+	return false;
 }
 
 // Extract doc comment and signature from the declaration site.

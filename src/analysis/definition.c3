@@ -746,8 +746,7 @@ fn String TokenList.find_struct_field_type(&self, String type_name, String field
 }
 
 // Find a struct field declaration: struct/bitstruct/union TypeName { ... field_name ... }
-// Returns the token index of the field name, or self.size if not found.
-fn usz TokenList.find_struct_field(&self, String type_name, String field_name)
+fn usz? TokenList.find_struct_field(&self, String type_name, String field_name)
 {
 	for (usz i = 0; i + 1 < self.size; i++)
 	{
@@ -780,7 +779,7 @@ fn usz TokenList.find_struct_field(&self, String type_name, String field_name)
 			}
 		}
 	}
-	return self.size;
+	return TOKEN_NOT_FOUND~;
 }
 
 // Search for a struct field declaration across all sources.
@@ -791,8 +790,7 @@ fn bool try_find_struct_field(String type_name, String field_name, String uri, S
 	{
 		TokenStream stream = token_stream_tokenize(content);
 		defer stream.free();
-		usz found = stream.tokens.find_struct_field(type_name, field_name);
-		if (found < stream.tokens.size)
+		if (try found = stream.tokens.find_struct_field(type_name, field_name))
 		{
 			emit_location(uri, content, stream.tokens.entries[found], out);
 			return true;
@@ -804,8 +802,7 @@ fn bool try_find_struct_field(String type_name, String field_name, String uri, S
 	{
 		if (docs.entries[d].uri == uri) continue;
 		TokenStream other_stream = token_stream_tokenize(docs.entries[d].content);
-		usz found = other_stream.tokens.find_struct_field(type_name, field_name);
-		if (found < other_stream.tokens.size)
+		if (try found = other_stream.tokens.find_struct_field(type_name, field_name))
 		{
 			emit_location(docs.entries[d].uri, docs.entries[d].content, other_stream.tokens.entries[found], out);
 			other_stream.free();
@@ -890,8 +887,7 @@ fn bool scan_dir_struct_field(String dir_path, String type_name, String field_na
 			{
 				String content = (String)file_content;
 				TokenStream stream = token_stream_tokenize(content);
-				usz found = stream.tokens.find_struct_field(type_name, field_name);
-				if (found < stream.tokens.size)
+				if (try found = stream.tokens.find_struct_field(type_name, field_name))
 				{
 					DString uri = dstring::temp();
 					append_file_uri(&uri, full_path);
@@ -920,11 +916,13 @@ fn bool scan_dir_struct_field(String dir_path, String type_name, String field_na
 fn bool TokenList.try_find_definition(&self, Token cursor_tok, usz cursor_idx, String uri, String content, DocumentList* docs, String stdlib_path, DString* out, String method_type = "")
 {
 	// 1. Search current file
-	usz decl_idx = self.find_declaration(cursor_tok, cursor_idx, method_type);
-	if (decl_idx < self.size && decl_idx != cursor_idx)
+	if (try decl_idx = self.find_declaration(cursor_tok, cursor_idx, method_type))
 	{
-		emit_location(uri, content, self.entries[decl_idx], out);
-		return true;
+		if (decl_idx != cursor_idx)
+		{
+			emit_location(uri, content, self.entries[decl_idx], out);
+			return true;
+		}
 	}
 
 	// 2. Search all other open documents
@@ -934,8 +932,7 @@ fn bool TokenList.try_find_definition(&self, Token cursor_tok, usz cursor_idx, S
 
 		TokenStream other_stream = token_stream_tokenize(docs.entries[d].content);
 
-		usz found = other_stream.tokens.find_declaration_in(cursor_tok, method_type);
-		if (found < other_stream.tokens.size)
+		if (try found = other_stream.tokens.find_declaration_in(cursor_tok, method_type))
 		{
 			emit_location(docs.entries[d].uri, docs.entries[d].content, other_stream.tokens.entries[found], out);
 			other_stream.free();
@@ -1052,16 +1049,14 @@ fn void encode_definition(String uri, String content, usz offset, DocumentList* 
 }
 
 // Search for a declaration in a token stream (not tied to a cursor position).
-fn usz TokenList.find_declaration_in(&self, Token target, String method_type = "")
+fn usz? TokenList.find_declaration_in(&self, Token target, String method_type = "")
 {
-	return self.find_declaration(target, self.size, method_type); // pass impossible cursor_idx
+	return self.find_declaration(target, self.size, method_type);
 }
 
 // Searches for the declaration of a token in the token stream.
-// Returns the index of the name token at the declaration site,
-// or self.size if not found.
 // When method_type is non-empty, searches for fn Type.name( pattern only.
-fn usz TokenList.find_declaration(&self, Token target, usz target_idx, String method_type = "")
+fn usz? TokenList.find_declaration(&self, Token target, usz target_idx, String method_type = "")
 {
 	String name = target.text;
 
@@ -1153,7 +1148,7 @@ fn usz TokenList.find_declaration(&self, Token target, usz target_idx, String me
 						if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
 					}
 				}
-				return self.size;
+				return TOKEN_NOT_FOUND~;
 			}
 			// fn ... name( or macro ... name(
 			for (usz i = 0; i < self.size; i++)
@@ -1196,10 +1191,10 @@ fn usz TokenList.find_declaration(&self, Token target, usz target_idx, String me
 				}
 			}
 		default:
-			return self.size;
+			return TOKEN_NOT_FOUND~;
 	}
 
-	return self.size;
+	return TOKEN_NOT_FOUND~;
 }
 
 // Scan project directories for a declaration on disk.
@@ -1271,8 +1266,7 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 				String content = (String)file_content;
 				TokenStream stream = token_stream_tokenize(content);
 
-				usz found = stream.tokens.find_declaration_in(target, method_type);
-				if (found < stream.tokens.size)
+				if (try found = stream.tokens.find_declaration_in(target, method_type))
 				{
 					// Build file:// URI from path
 					DString uri = dstring::temp();

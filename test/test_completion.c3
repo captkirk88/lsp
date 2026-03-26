@@ -1,10 +1,13 @@
 module lsp;
 
 import std::core::dstring;
+import std::core::mem;
 
 fn void test_completion_empty_prefix() @test {
 	DString out = dstring::temp();
-	encode_completions("fn x() {}", 0, &out);
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	encode_completions("", "fn x() {}", 0, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"isIncomplete":false`), "got: %s", result);
 	assert(result.contains(`"items":[`));
@@ -12,24 +15,30 @@ fn void test_completion_empty_prefix() @test {
 
 fn void test_completion_keyword_prefix() @test {
 	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
 	// "whi" at offset 3 — should match "while"
-	encode_completions("whi", 3, &out);
+	encode_completions("", "whi", 3, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"label":"while"`), "got: %s", result);
 }
 
 fn void test_completion_type_prefix() @test {
 	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
 	// "in" at offset 2 — should match "int", "int128", "inline", "interface", "import"
-	encode_completions("in", 2, &out);
+	encode_completions("", "in", 2, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"label":"int"`), "got: %s", result);
 }
 
 fn void test_completion_ct_prefix() @test {
 	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
 	// "$si" at offset 3 — should match "$sizeof"
-	encode_completions("$si", 3, &out);
+	encode_completions("", "$si", 3, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"label":"$sizeof"`), "got: %s", result);
 	// Should not include regular keywords when prefix starts with $
@@ -38,18 +47,22 @@ fn void test_completion_ct_prefix() @test {
 
 fn void test_completion_doc_identifiers() @test {
 	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
 	// "fn hello() {}\nfn world() {}\nhel" — at offset after "hel"
 	String content = "fn hello() {}\nfn world() {}\nhel";
-	encode_completions(content, content.len, &out);
+	encode_completions("", content, content.len, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"label":"hello"`), "got: %s", result);
 }
 
 fn void test_completion_no_duplicate_doc_idents() @test {
 	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
 	// Same identifier appears twice; should only appear once in completions
 	String content = "fn x() { foo(); foo(); }\nfo";
-	encode_completions(content, content.len, &out);
+	encode_completions("", content, content.len, docs, "", &out);
 	String result = out.str_view();
 	// Count occurrences of "foo" — should be exactly one
 	usz count = 0;
@@ -67,9 +80,201 @@ fn void test_completion_no_duplicate_doc_idents() @test {
 
 fn void test_completion_struct_json() @test {
 	DString out = dstring::temp();
-	encode_completions("str", 3, &out);
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	encode_completions("", "str", 3, docs, "", &out);
 	String result = out.str_view();
 	// Should have "struct" as keyword and be valid JSON structure
 	assert(result.contains(`"label":"struct"`), "got: %s", result);
 	assert(result.contains(`"kind":14`), "got: %s", result); // Keyword kind
+}
+
+// --- DOT completion tests ---
+
+fn void test_completion_dot_struct_fields() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int x; String name; }\nfn void test() { Foo f; f.";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"label":"x"`), "expected field x, got: %s", result);
+	assert(result.contains(`"label":"name"`), "expected field name, got: %s", result);
+	assert(result.contains(`"kind":5`), "expected Field kind=5, got: %s", result);
+	// Should NOT contain keywords
+	assert(!result.contains(`"label":"while"`), "should not have keywords in dot context, got: %s", result);
+}
+
+fn void test_completion_dot_methods() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int x; }\nfn int Foo.get_x(&self) { return self.x; }\nfn void test() { Foo f; f.";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"label":"get_x"`), "expected method get_x, got: %s", result);
+	assert(result.contains(`"kind":2`), "expected Method kind=2, got: %s", result);
+}
+
+fn void test_completion_dot_partial_prefix() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int x; String name; }\nfn int Foo.get_x(&self) { return self.x; }\nfn void test() { Foo f; f.ge";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"label":"get_x"`), "expected method get_x with partial prefix, got: %s", result);
+	// "x" and "name" should NOT appear (don't start with "ge")
+	assert(!result.contains(`"label":"x"`), "field x should be filtered out by prefix, got: %s", result);
+	assert(!result.contains(`"label":"name"`), "field name should be filtered out by prefix, got: %s", result);
+}
+
+fn void test_completion_dot_pointer_type() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int value; }\nfn void test() { Foo* ptr; ptr.";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"label":"value"`), "expected field value for pointer type, got: %s", result);
+}
+
+fn void test_completion_dot_no_keywords() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int x; }\nfn void test() { Foo f; f.";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	// DOT context should never contain keywords or builtin types
+	assert(!result.contains(`"label":"while"`), "no keywords in dot completion");
+	assert(!result.contains(`"label":"int"`), "no builtin types in dot completion");
+	assert(!result.contains(`"label":"$sizeof"`), "no CT keywords in dot completion");
+}
+
+fn void test_completion_dot_cross_file() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	// Struct defined in another open document
+	String other_content = "struct Bar { int count; String label; }\nfn void Bar.reset(&self) {}";
+	docs.open("file:///other.c3", other_content, 1);
+
+	String content = "fn void test() { Bar b; b.";
+	encode_completions("file:///main.c3", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	docs.close("file:///other.c3");
+	assert(result.contains(`"label":"count"`), "expected cross-file field count, got: %s", result);
+	assert(result.contains(`"label":"label"`), "expected cross-file field label, got: %s", result);
+	assert(result.contains(`"label":"reset"`), "expected cross-file method reset, got: %s", result);
+}
+
+fn void test_completion_dot_field_detail() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { String name; }\nfn void test() { Foo f; f.";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	// Field should have its type as detail
+	assert(result.contains(`"detail":"String"`), "expected detail with type String, got: %s", result);
+}
+
+fn void test_completion_parse_imports() @test {
+	String[MAX_IMPORTS] imports;
+	String content = "module lsp;\n\nimport std::io;\nimport c3::lexer;\nimport args;\n\nfn void main() {}";
+	usz count = parse_imports(content, &imports);
+	assert(count == 3, "expected 3 imports, got %d", count);
+
+	bool found_io = false;
+	bool found_lexer = false;
+	bool found_args = false;
+	for (usz i = 0; i < count; i++)
+	{
+		if (imports[i] == "std::io") found_io = true;
+		if (imports[i] == "c3::lexer") found_lexer = true;
+		if (imports[i] == "args") found_args = true;
+	}
+	assert(found_io, "expected std::io import");
+	assert(found_lexer, "expected c3::lexer import");
+	assert(found_args, "expected args import");
+}
+
+fn void test_completion_module_to_dir() @test {
+	DString buf = dstring::temp();
+	String result = module_to_dir_path("std::io", &buf);
+	assert(result == "std/io", "expected std/io, got: %s", result);
+
+	buf = dstring::temp();
+	result = module_to_dir_path("std::collections::list", &buf);
+	assert(result == "std/collections/list", "expected std/collections/list, got: %s", result);
+
+	buf = dstring::temp();
+	result = module_to_dir_path("args", &buf);
+	assert(result == "args", "expected args, got: %s", result);
+}
+
+fn void test_completion_cross_file_type() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	// Simulate another open file with a type
+	String other = "struct TokenStream { TokenList tokens; }";
+	docs.open("file:///stream.c3", other, 1);
+
+	// Current file typing "Token" should find TokenStream from open doc
+	String content = "module lsp;\nfn void main() { Token";
+	encode_completions("file:///main.c3", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	docs.close("file:///stream.c3");
+	assert(result.contains(`"label":"TokenStream"`), "expected TokenStream from open doc, got: %s", result);
+}
+
+fn void test_completion_module_scope() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	// Simulate an open file from the "args" module
+	String args_content = "module args;\nfn void help() {}\nfn void handle_input() {}\nstruct Config { int verbose; }";
+	docs.open("file:///args.c3", args_content, 1);
+
+	// Also have an open file from another module with similar names
+	String other_content = "module parser;\nfn void highlight() {}\nfn void handle_token() {}";
+	docs.open("file:///parser.c3", other_content, 1);
+
+	// Type "args::h" — should only see args module identifiers starting with h
+	String content = "module lsp;\nimport args;\nfn void main() { args::h";
+	encode_completions("file:///main.c3", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	docs.close("file:///args.c3");
+	docs.close("file:///parser.c3");
+
+	assert(result.contains(`"label":"help"`), "expected help from args module, got: %s", result);
+	assert(result.contains(`"label":"handle_input"`), "expected handle_input from args module, got: %s", result);
+	// Should NOT contain identifiers from parser module
+	assert(!result.contains(`"label":"highlight"`), "should not have parser::highlight, got: %s", result);
+	assert(!result.contains(`"label":"handle_token"`), "should not have parser::handle_token, got: %s", result);
+	// Should NOT contain keywords
+	assert(!result.contains(`"label":"while"`), "should not have keywords in scope context, got: %s", result);
+}
+
+fn void test_completion_module_scope_no_prefix() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	String args_content = "module args;\nfn void help() {}\nstruct Config { int verbose; }";
+	docs.open("file:///args.c3", args_content, 1);
+
+	// Type "args::" with no prefix — should see all args identifiers
+	String content = "module lsp;\nimport args;\nfn void main() { args::";
+	encode_completions("file:///main.c3", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	docs.close("file:///args.c3");
+
+	assert(result.contains(`"label":"help"`), "expected help, got: %s", result);
+	assert(result.contains(`"label":"Config"`), "expected Config, got: %s", result);
 }

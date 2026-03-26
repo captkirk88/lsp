@@ -2,6 +2,8 @@ module lsp;
 
 import std::core::dstring;
 import std::core::mem;
+import std::io::file;
+import std::io::path;
 import c3::lexer;
 
 const String[*] KEYWORDS = {
@@ -121,7 +123,7 @@ const String[*] CT_KEYWORDS = {
 
 const usz MAX_DOC_IDENTS = 512;
 
-fn void encode_completions(String content, usz offset, DString* out)
+fn void encode_completions(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, DString* out)
 {
 	// Find prefix by scanning backwards from offset
 	usz prefix_start = offset;
@@ -144,42 +146,83 @@ fn void encode_completions(String content, usz offset, DString* out)
 		prefix = content[prefix_start..offset - 1];
 	}
 
+	// Check for DOT context: "foo." or "foo.ba" (partial member)
+	bool is_dot_context = prefix_start > 0 && content[prefix_start - 1] == '.';
+
+	// Check for module scope context: "args::" or "args::h" or "std::io::"
+	String module_scope = "";
+	bool is_scope_context = false;
+	if (!is_dot_context && prefix_start >= 2 && content[prefix_start - 1] == ':' && content[prefix_start - 2] == ':')
+	{
+		// Scan backwards past "::" to find the module path (may include nested :: like std::io)
+		usz mod_end = prefix_start - 2;
+		usz mod_start = mod_end;
+		while (mod_start > 0)
+		{
+			char c = content[mod_start - 1];
+			if (is_ident_char(c) || c == ':')
+			{
+				mod_start--;
+			}
+			else
+			{
+				break;
+			}
+		}
+		if (mod_start < mod_end)
+		{
+			module_scope = content[mod_start..mod_end - 1];
+			is_scope_context = true;
+		}
+	}
+
 	out.append(`{"isIncomplete":false,"items":[`);
 	bool first = true;
 
-	// Static keywords
-	if (prefix.len == 0 || (prefix[0] != '$' && prefix[0] != '@' && prefix[0] != '#'))
+	if (is_dot_context)
 	{
-		foreach (kw : KEYWORDS)
-		{
-			if (prefix.len == 0 || starts_with_ci(kw, prefix))
-			{
-				emit_completion_item(out, kw, 14, &first); // Keyword
-			}
-		}
-		foreach (bt : BUILTIN_TYPES)
-		{
-			if (prefix.len == 0 || starts_with_ci(bt, prefix))
-			{
-				emit_completion_item(out, bt, 22, &first); // Struct (for types)
-			}
-		}
+		collect_dot_completions(uri, content, offset, docs, stdlib_path, prefix, out, &first);
 	}
-
-	// CT keywords when prefix starts with $
-	if (prefix.len == 0 || prefix[0] == '$')
+	else if (is_scope_context)
 	{
-		foreach (ct : CT_KEYWORDS)
+		collect_module_completions(uri, content, module_scope, prefix, docs, stdlib_path, out, &first);
+	}
+	else
+	{
+		// Static keywords
+		if (prefix.len == 0 || (prefix[0] != '$' && prefix[0] != '@' && prefix[0] != '#'))
 		{
-			if (prefix.len == 0 || starts_with_ci(ct, prefix))
+			foreach (kw : KEYWORDS)
 			{
-				emit_completion_item(out, ct, 14, &first); // Keyword
+				if (prefix.len == 0 || starts_with_ci(kw, prefix))
+				{
+					emit_completion_item(out, kw, 14, &first); // Keyword
+				}
+			}
+			foreach (bt : BUILTIN_TYPES)
+			{
+				if (prefix.len == 0 || starts_with_ci(bt, prefix))
+				{
+					emit_completion_item(out, bt, 22, &first); // Struct (for types)
+				}
 			}
 		}
-	}
 
-	// Document identifiers
-	collect_doc_identifiers(content, prefix, out, &first);
+		// CT keywords when prefix starts with $
+		if (prefix.len == 0 || prefix[0] == '$')
+		{
+			foreach (ct : CT_KEYWORDS)
+			{
+				if (prefix.len == 0 || starts_with_ci(ct, prefix))
+				{
+					emit_completion_item(out, ct, 14, &first); // Keyword
+				}
+			}
+		}
+
+		// Document identifiers (current file + open docs + project files)
+		collect_all_identifiers(uri, content, prefix, docs, stdlib_path, out, &first);
+	}
 
 	out.append("]}");
 }
@@ -188,6 +231,14 @@ fn void emit_completion_item(DString* out, String label, int kind, bool* first) 
 {
 	if (!*first) out.append_char(',');
 	CompletionItem item = { .label = label, .kind = kind, };
+	item.encode(out);
+	*first = false;
+}
+
+fn void emit_completion_item_detail(DString* out, String label, int kind, String detail, bool* first) @private
+{
+	if (!*first) out.append_char(',');
+	CompletionItem item = { .label = label, .kind = kind, .detail = detail, };
 	item.encode(out);
 	*first = false;
 }
@@ -212,13 +263,301 @@ fn bool starts_with_ci(String s, String prefix) @private
 	return true;
 }
 
-fn void collect_doc_identifiers(String content, String prefix, DString* out, bool* first) @private
+// Module-scoped completion: "args::h" → only identifiers from the args module starting with h
+fn void collect_module_completions(String uri, String content, String module_name, String prefix, DocumentList* docs, String stdlib_path, DString* out, bool* first) @private
+{
+	String[MAX_DOC_IDENTS] seen;
+	usz seen_count = 0;
+
+	// 1. Search open documents for files declaring this module
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (has_module_declaration(docs.entries[d].content, module_name))
+		{
+			collect_idents_from_content(docs.entries[d].content, prefix, out, first, &seen, &seen_count);
+		}
+	}
+
+	// 2. Search project files on disk
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		ProjectDirs pdirs;
+		pdirs.get_search_dirs(file_path);
+		if (pdirs.project_root.len > 0)
+		{
+			for (usz i = 0; i < pdirs.count; i++)
+			{
+				DString search_path = dstring::temp();
+				search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
+				scan_dir_module_idents(search_path.str_view(), module_name, prefix, out, first, &seen, &seen_count, 0);
+			}
+		}
+	}
+
+	// 3. Search stdlib (convert module path to dir: std::io → std/io)
+	if (stdlib_path.len > 0)
+	{
+		DString dir_buf = dstring::temp();
+		String mod_dir = module_to_dir_path(module_name, &dir_buf);
+		DString full_dir = dstring::temp();
+		full_dir.appendf("%s/%s", stdlib_path, mod_dir);
+		scan_dir_idents(full_dir.str_view(), prefix, out, first, &seen, &seen_count, 0);
+	}
+}
+
+// Check if file content starts with "module <name>;"
+fn bool has_module_declaration(String content, String module_name) @private
 {
 	Lexer lex;
 	lex.init(content);
 
+	while (true)
+	{
+		if (try tok = lex.next())
+		{
+			if (tok.type == MODULE)
+			{
+				// Collect the module path
+				DString mod_path = dstring::temp();
+				bool first_part = true;
+				while (true)
+				{
+					if (try next = lex.next())
+					{
+						if (is_ident(next.type) || next.type == TYPE_IDENT || next.type == CONST_IDENT)
+						{
+							if (!first_part) mod_path.append("::");
+							mod_path.append(next.text);
+							first_part = false;
+						}
+						else if (next.type == SCOPE)
+						{
+							continue;
+						}
+						else
+						{
+							break;
+						}
+					}
+					else
+					{
+						break;
+					}
+				}
+				return mod_path.str_view() == module_name;
+			}
+			// Module must be the first declaration
+			if (tok.type == IMPORT || tok.type == FUNC || tok.type == STRUCT) return false;
+		}
+		else
+		{
+			if (lex.at_end()) break;
+			lex.pos++;
+			lex.col++;
+		}
+	}
+	return false;
+}
+
+// Scan directory recursively, only collecting idents from files that declare the given module
+fn void scan_dir_module_idents(String dir_path, String module_name, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count, int depth) @private
+{
+	if (depth > COMPLETION_MAX_SCAN_DEPTH) return;
+	if (*seen_count >= MAX_DOC_IDENTS) return;
+
+	Path p;
+	if (try pp = path::temp(dir_path)) { p = pp; } else { return; }
+	PathList entries;
+	if (try el = path::ls(mem, p)) { entries = el; } else { return; }
+	defer { foreach (&e : entries) e.free(); entries.free(); }
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				String fc = (String)file_content;
+				if (has_module_declaration(fc, module_name))
+				{
+					collect_idents_from_content(fc, prefix, out, first, seen, seen_count);
+				}
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			scan_dir_module_idents(full_path, module_name, prefix, out, first, seen, seen_count, depth + 1);
+		}
+	}
+}
+
+const usz MAX_IMPORTS = 32;
+
+// Parse import statements from file content, returns module paths like "std::io", "c3::lexer"
+fn usz parse_imports(String content, String[MAX_IMPORTS]* imports) @private
+{
+	Lexer lex;
+	lex.init(content);
+	usz count = 0;
+
+	while (count < MAX_IMPORTS)
+	{
+		if (try tok = lex.next())
+		{
+			if (tok.type == IMPORT)
+			{
+				// Collect the module path: ident (SCOPE ident)*
+				DString mod_path = dstring::temp();
+				bool first_part = true;
+				while (true)
+				{
+					if (try next = lex.next())
+					{
+						if (is_ident(next.type) || next.type == TYPE_IDENT || next.type == CONST_IDENT)
+						{
+							if (!first_part) mod_path.append("::");
+							mod_path.append(next.text);
+							first_part = false;
+						}
+						else if (next.type == SCOPE) // ::
+						{
+							continue;
+						}
+						else
+						{
+							break;
+						}
+					}
+					else
+					{
+						if (lex.at_end()) break;
+						lex.pos++;
+						lex.col++;
+						break;
+					}
+				}
+				if (mod_path.len() > 0)
+				{
+					(*imports)[count] = mod_path.str_view();
+					count++;
+				}
+			}
+			// Stop after module-level declarations end (fn, struct, etc.)
+			if (tok.type == FUNC || tok.type == STRUCT || tok.type == MACRO ||
+				tok.type == BITSTRUCT || tok.type == UNION || tok.type == ENUM ||
+				tok.type == FAULTDEF)
+			{
+				break;
+			}
+		}
+		else
+		{
+			if (lex.at_end()) break;
+			lex.pos++;
+			lex.col++;
+		}
+	}
+	return count;
+}
+
+// Convert a module path to a directory path: "std::io" → "std/io"
+fn String module_to_dir_path(String mod_path, DString* buf) @private
+{
+	buf.clear();
+	foreach (c : mod_path)
+	{
+		if (c == ':') continue; // skip both colons in ::
+		buf.append_char(c);
+	}
+	// Replace remaining double-removed colons: "stdio" → need actual slashes
+	// Actually, since we skip ':', "std::io" becomes "stdio" which is wrong.
+	// Let's redo: replace "::" with "/"
+	buf.clear();
+	usz i = 0;
+	while (i < mod_path.len)
+	{
+		if (i + 1 < mod_path.len && mod_path[i] == ':' && mod_path[i + 1] == ':')
+		{
+			buf.append_char('/');
+			i += 2;
+		}
+		else
+		{
+			buf.append_char(mod_path[i]);
+			i++;
+		}
+	}
+	return buf.str_view();
+}
+
+// Collect identifiers from current file, open docs, project files, and imported stdlib modules
+fn void collect_all_identifiers(String uri, String content, String prefix, DocumentList* docs, String stdlib_path, DString* out, bool* first) @private
+{
 	String[MAX_DOC_IDENTS] seen;
 	usz seen_count = 0;
+
+	// 1. Current file
+	collect_idents_from_content(content, prefix, out, first, &seen, &seen_count);
+
+	// Only search cross-file when there's a prefix (avoid flooding with every identifier)
+	if (prefix.len == 0) return;
+
+	// 2. Open documents
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (docs.entries[d].uri == uri) continue;
+		collect_idents_from_content(docs.entries[d].content, prefix, out, first, &seen, &seen_count);
+	}
+
+	// 3. Project files on disk
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		ProjectDirs pdirs;
+		pdirs.get_search_dirs(file_path);
+		if (pdirs.project_root.len > 0)
+		{
+			for (usz i = 0; i < pdirs.count; i++)
+			{
+				DString search_path = dstring::temp();
+				search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
+				scan_dir_idents(search_path.str_view(), prefix, out, first, &seen, &seen_count, 0);
+			}
+		}
+	}
+
+	// 4. Imported stdlib modules
+	if (stdlib_path.len > 0)
+	{
+		String[MAX_IMPORTS] imports;
+		usz import_count = parse_imports(content, &imports);
+
+		for (usz i = 0; i < import_count; i++)
+		{
+			DString dir_buf = dstring::temp();
+			String mod_dir = module_to_dir_path(imports[i], &dir_buf);
+
+			DString full_dir = dstring::temp();
+			full_dir.appendf("%s/%s", stdlib_path, mod_dir);
+			scan_dir_idents(full_dir.str_view(), prefix, out, first, &seen, &seen_count, 0);
+		}
+	}
+}
+
+fn void collect_idents_from_content(String content, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count) @private
+{
+	Lexer lex;
+	lex.init(content);
 
 	while (true)
 	{
@@ -245,9 +584,9 @@ fn void collect_doc_identifiers(String content, String prefix, DString* out, boo
 
 			// Dedup with linear scan
 			bool dup = false;
-			for (usz j = 0; j < seen_count; j++)
+			for (usz j = 0; j < *seen_count; j++)
 			{
-				if (seen[j] == tok.text)
+				if ((*seen)[j] == tok.text)
 				{
 					dup = true;
 					break;
@@ -255,10 +594,10 @@ fn void collect_doc_identifiers(String content, String prefix, DString* out, boo
 			}
 			if (dup) continue;
 
-			if (seen_count < MAX_DOC_IDENTS)
+			if (*seen_count < MAX_DOC_IDENTS)
 			{
-				seen[seen_count] = tok.text;
-				seen_count++;
+				(*seen)[*seen_count] = tok.text;
+				(*seen_count)++;
 			}
 
 			emit_completion_item(out, tok.text, kind, first);
@@ -268,6 +607,359 @@ fn void collect_doc_identifiers(String content, String prefix, DString* out, boo
 			if (lex.at_end()) break;
 			lex.pos++;
 			lex.col++;
+		}
+	}
+}
+
+fn void scan_dir_idents(String dir_path, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count, int depth) @private
+{
+	if (depth > COMPLETION_MAX_SCAN_DEPTH) return;
+	if (*seen_count >= MAX_DOC_IDENTS) return;
+
+	Path p;
+	if (try pp = path::temp(dir_path)) { p = pp; } else { return; }
+	PathList entries;
+	if (try el = path::ls(mem, p)) { entries = el; } else { return; }
+	defer { foreach (&e : entries) e.free(); entries.free(); }
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				String fc = (String)file_content;
+				collect_idents_from_content(fc, prefix, out, first, seen, seen_count);
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			scan_dir_idents(full_path, prefix, out, first, seen, seen_count, depth + 1);
+		}
+	}
+}
+
+// DOT-expression completion: resolve receiver type and collect fields + methods
+fn void collect_dot_completions(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, String prefix, DString* out, bool* first) @private
+{
+	TokenStream stream = token_stream_tokenize(content);
+	defer stream.free();
+
+	// Find the token at cursor offset
+	Token cursor_tok;
+	usz cursor_idx;
+	if (!stream.tokens.find_token_at(offset, &cursor_tok, &cursor_idx)) return;
+
+	// If we landed on the DOT itself (cursor right after "foo."),
+	// resolve_receiver_type expects cursor_idx to be the token AFTER the DOT
+	if (cursor_tok.type == DOT)
+	{
+		cursor_idx = cursor_idx + 1;
+	}
+
+	// Resolve receiver type
+	String recv_type = stream.tokens.resolve_receiver_type(cursor_idx, uri, docs);
+	if (recv_type.len == 0) return;
+
+	// Resolve alias (e.g. LineOffsets → List)
+	String resolved_type = stream.tokens.resolve_type_alias_across(recv_type, docs);
+	if (resolved_type.len == 0)
+	{
+		String file_path = uri_to_path(uri);
+		if (file_path.len > 0)
+		{
+			resolved_type = resolve_alias_in_project(file_path, recv_type);
+		}
+	}
+
+	String struct_type = resolved_type.len > 0 ? resolved_type : recv_type;
+
+	String[MAX_DOC_IDENTS] seen;
+	usz seen_count = 0;
+
+	// Collect struct fields (use resolved alias for struct lookup)
+	collect_struct_fields(struct_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+	// Also try unresolved name for struct fields
+	if (struct_type != recv_type)
+	{
+		collect_struct_fields(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+	}
+
+	// Collect methods (try original alias name first, then resolved)
+	collect_type_methods(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+	if (resolved_type.len > 0 && resolved_type != recv_type)
+	{
+		collect_type_methods(resolved_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+	}
+}
+
+// Collect all struct fields matching prefix from a TokenList
+fn void TokenList.collect_struct_fields_into(&self, String type_name, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count)
+{
+	for (usz i = 0; i + 1 < self.size; i++)
+	{
+		TokenType kw = self.entries[i].type;
+		if (kw != STRUCT && kw != BITSTRUCT && kw != UNION) continue;
+		if (self.entries[i + 1].type != TYPE_IDENT || self.entries[i + 1].text != type_name) continue;
+
+		usz brace = i + 2;
+		while (brace < self.size && self.entries[brace].type != LBRACE) brace++;
+		if (brace >= self.size) continue;
+
+		usz depth = 1;
+		for (usz j = brace + 1; j < self.size && depth > 0; j++)
+		{
+			if (self.entries[j].type == LBRACE) { depth++; continue; }
+			if (self.entries[j].type == RBRACE) { depth--; continue; }
+
+			if (depth == 1 && is_ident(self.entries[j].type))
+			{
+				String field_name = self.entries[j].text;
+				if (prefix.len > 0 && !starts_with_ci(field_name, prefix)) continue;
+
+				// Dedup
+				bool dup = false;
+				for (usz k = 0; k < *seen_count; k++)
+				{
+					if ((*seen)[k] == field_name) { dup = true; break; }
+				}
+				if (dup) continue;
+				if (*seen_count < MAX_DOC_IDENTS)
+				{
+					(*seen)[*seen_count] = field_name;
+					(*seen_count)++;
+				}
+
+				// Get field type for detail
+				String detail = "";
+				if (j > 0 && self.entries[j - 1].type == TYPE_IDENT)
+				{
+					detail = self.entries[j - 1].text;
+				}
+				else if (j > 1 && self.entries[j - 1].type == STAR && self.entries[j - 2].type == TYPE_IDENT)
+				{
+					detail = self.entries[j - 2].text;
+				}
+
+				emit_completion_item_detail(out, field_name, 5, detail, first); // 5 = Field
+			}
+		}
+	}
+}
+
+// Collect all methods matching prefix from a TokenList (fn Type.method_name( patterns)
+fn void TokenList.collect_methods_into(&self, String type_name, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count)
+{
+	for (usz i = 0; i < self.size; i++)
+	{
+		if (self.entries[i].type != FUNC && self.entries[i].type != MACRO) continue;
+
+		// Look for Type.method_name( pattern
+		for (usz j = i + 1; j < self.size && j < i + 64; j++)
+		{
+			if (self.entries[j].type == LPAREN)
+			{
+				// Check for Type.name( pattern: [j-3]=TYPE_IDENT, [j-2]=DOT, [j-1]=IDENT
+				if (j >= 3 && self.entries[j - 2].type == DOT
+					&& self.entries[j - 3].type == TYPE_IDENT
+					&& self.entries[j - 3].text == type_name
+					&& is_ident(self.entries[j - 1].type))
+				{
+					String method_name = self.entries[j - 1].text;
+					if (prefix.len > 0 && !starts_with_ci(method_name, prefix)) break;
+
+					// Dedup
+					bool dup = false;
+					for (usz k = 0; k < *seen_count; k++)
+					{
+						if ((*seen)[k] == method_name) { dup = true; break; }
+					}
+					if (!dup)
+					{
+						if (*seen_count < MAX_DOC_IDENTS)
+						{
+							(*seen)[*seen_count] = method_name;
+							(*seen_count)++;
+						}
+						emit_completion_item(out, method_name, 2, first); // 2 = Method
+					}
+				}
+				break;
+			}
+			if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+		}
+	}
+}
+
+// Collect struct fields across current file, open docs, project files, and stdlib
+fn void collect_struct_fields(String type_name, String uri, String content, DocumentList* docs, String stdlib_path, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count) @private
+{
+	// 1. Current file
+	{
+		TokenStream stream = token_stream_tokenize(content);
+		defer stream.free();
+		stream.tokens.collect_struct_fields_into(type_name, prefix, out, first, seen, seen_count);
+	}
+
+	// 2. Open documents
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (docs.entries[d].uri == uri) continue;
+		TokenStream other_stream = token_stream_tokenize(docs.entries[d].content);
+		other_stream.tokens.collect_struct_fields_into(type_name, prefix, out, first, seen, seen_count);
+		other_stream.free();
+	}
+
+	// 3. Project files on disk
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		ProjectDirs pdirs;
+		pdirs.get_search_dirs(file_path);
+		if (pdirs.project_root.len > 0)
+		{
+			for (usz i = 0; i < pdirs.count; i++)
+			{
+				DString search_path = dstring::temp();
+				search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
+				scan_dir_fields(search_path.str_view(), type_name, prefix, out, first, seen, seen_count, 0);
+			}
+		}
+	}
+
+	// 4. Stdlib
+	if (stdlib_path.len > 0)
+	{
+		scan_dir_fields(stdlib_path, type_name, prefix, out, first, seen, seen_count, 0);
+	}
+}
+
+// Collect methods across current file, open docs, project files, and stdlib
+fn void collect_type_methods(String type_name, String uri, String content, DocumentList* docs, String stdlib_path, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count) @private
+{
+	// 1. Current file
+	{
+		TokenStream stream = token_stream_tokenize(content);
+		defer stream.free();
+		stream.tokens.collect_methods_into(type_name, prefix, out, first, seen, seen_count);
+	}
+
+	// 2. Open documents
+	for (usz d = 0; d < docs.size; d++)
+	{
+		if (docs.entries[d].uri == uri) continue;
+		TokenStream other_stream = token_stream_tokenize(docs.entries[d].content);
+		other_stream.tokens.collect_methods_into(type_name, prefix, out, first, seen, seen_count);
+		other_stream.free();
+	}
+
+	// 3. Project files on disk
+	String file_path = uri_to_path(uri);
+	if (file_path.len > 0)
+	{
+		ProjectDirs pdirs;
+		pdirs.get_search_dirs(file_path);
+		if (pdirs.project_root.len > 0)
+		{
+			for (usz i = 0; i < pdirs.count; i++)
+			{
+				DString search_path = dstring::temp();
+				search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
+				scan_dir_methods(search_path.str_view(), type_name, prefix, out, first, seen, seen_count, 0);
+			}
+		}
+	}
+
+	// 4. Stdlib
+	if (stdlib_path.len > 0)
+	{
+		scan_dir_methods(stdlib_path, type_name, prefix, out, first, seen, seen_count, 0);
+	}
+}
+
+const int COMPLETION_MAX_SCAN_DEPTH = 5;
+
+fn void scan_dir_fields(String dir_path, String type_name, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count, int depth) @private
+{
+	if (depth > COMPLETION_MAX_SCAN_DEPTH) return;
+
+	Path p;
+	if (try pp = path::temp(dir_path)) { p = pp; } else { return; }
+	PathList entries;
+	if (try el = path::ls(mem, p)) { entries = el; } else { return; }
+	defer { foreach (&e : entries) e.free(); entries.free(); }
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				String fc = (String)file_content;
+				TokenStream stream = token_stream_tokenize(fc);
+				stream.tokens.collect_struct_fields_into(type_name, prefix, out, first, seen, seen_count);
+				stream.free();
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			scan_dir_fields(full_path, type_name, prefix, out, first, seen, seen_count, depth + 1);
+		}
+	}
+}
+
+fn void scan_dir_methods(String dir_path, String type_name, String prefix, DString* out, bool* first, String[MAX_DOC_IDENTS]* seen, usz* seen_count, int depth) @private
+{
+	if (depth > COMPLETION_MAX_SCAN_DEPTH) return;
+
+	Path p;
+	if (try pp = path::temp(dir_path)) { p = pp; } else { return; }
+	PathList entries;
+	if (try el = path::ls(mem, p)) { entries = el; } else { return; }
+	defer { foreach (&e : entries) e.free(); entries.free(); }
+
+	foreach (entry : entries)
+	{
+		String entry_name = entry.str_view();
+		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
+		defer mem::free(path_buf);
+		path_buf[:dir_path.len] = dir_path[:dir_path.len];
+		path_buf[dir_path.len] = '/';
+		path_buf[dir_path.len + 1..] = entry_name[:entry_name.len];
+		String full_path = (String)path_buf;
+
+		if (entry_name.ends_with(".c3") || entry_name.ends_with(".c3i"))
+		{
+			if (try file_content = file::load(mem, full_path))
+			{
+				String fc = (String)file_content;
+				TokenStream stream = token_stream_tokenize(fc);
+				stream.tokens.collect_methods_into(type_name, prefix, out, first, seen, seen_count);
+				stream.free();
+				mem::free(file_content);
+			}
+		}
+		else
+		{
+			scan_dir_methods(full_path, type_name, prefix, out, first, seen, seen_count, depth + 1);
 		}
 	}
 }

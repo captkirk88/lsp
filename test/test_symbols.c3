@@ -80,3 +80,25 @@ fn void test_symbols_multiple() @test {
 	assert(result.contains(`"name":"Foo"`), "got: %s", result);
 	assert(result.contains(`"name":"Bar"`), "got: %s", result);
 }
+
+fn void test_symbols_method_nested() @test {
+	DString out = dstring::temp();
+	encode_document_symbols("struct World { int x; }\nfn void World.find_chunk() {}\nfn void World.block_type_at() {}", &out);
+	String result = out.str_view();
+	// Methods should be nested as children of their parent struct
+	assert(result.contains(`"children":`), "expected children array, got: %s", result);
+	assert(result.contains(`"name":"find_chunk"`), "got: %s", result);
+	assert(result.contains(`"name":"block_type_at"`), "got: %s", result);
+	// The methods should NOT appear as top-level "World.find_chunk"
+	assert(!result.contains(`"name":"World.find_chunk"`), "method should be nested, got: %s", result);
+	assert(!result.contains(`"name":"World.block_type_at"`), "method should be nested, got: %s", result);
+}
+
+fn void test_symbols_method_orphan() @test {
+	DString out = dstring::temp();
+	// Method without matching struct in same file — should show as Type.method at top level
+	encode_document_symbols("fn void MyType.do_thing() {}", &out);
+	String result = out.str_view();
+	assert(result.contains(`"name":"MyType.do_thing"`), "got: %s", result);
+	assert(result.contains(`"kind":12`), "got: %s", result); // Function
+}

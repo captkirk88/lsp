@@ -5,6 +5,14 @@ import std::core::mem;
 import c3::lexer;
 
 const usz MAX_LOOKAHEAD = 64;
+const usz MAX_SYMBOLS = 512;
+
+struct SymbolEntry
+{
+	DocumentSymbol sym;
+	String parent_type;  // For "Type.method", this is "Type"; empty otherwise
+	bool is_child;
+}
 
 fn void encode_document_symbols(String content, DString* out)
 {
@@ -12,12 +20,17 @@ fn void encode_document_symbols(String content, DString* out)
 	defer stream.free();
 	LineOffsets* lo = stream.get_line_offsets();
 
-	bool first = true;
+	// Collect all symbols first
+	SymbolEntry[MAX_SYMBOLS] entries;
+	usz entry_count = 0;
 
 	for (usz i = 0; i < stream.tokens.size; i++)
 	{
+		if (entry_count >= MAX_SYMBOLS) break;
+
 		Token tok = stream.tokens.entries[i];
 		String name = "";
+		String parent_type = "";
 		int kind = 0;
 		usz name_offset = 0;
 		usz name_len = 0;
@@ -51,7 +64,7 @@ fn void encode_document_symbols(String content, DString* out)
 				}
 			case FUNC:
 				// fn ... IDENT LPAREN — the IDENT before LPAREN is the name
-				// If preceded by TYPE_IDENT DOT, combine as Type.method
+				// If preceded by TYPE_IDENT DOT, it's a method
 				usz lparen_idx = 0;
 				for (usz j = i + 1; j < stream.tokens.size && j < i + MAX_LOOKAHEAD; j++)
 				{
@@ -71,13 +84,11 @@ fn void encode_document_symbols(String content, DString* out)
 						// Check for Type.method pattern
 						if (lparen_idx >= 3 + i && stream.tokens.entries[lparen_idx - 2].type == DOT && stream.tokens.entries[lparen_idx - 3].type == TYPE_IDENT)
 						{
-							DString combined = dstring::temp();
-							combined.append(stream.tokens.entries[lparen_idx - 3].text);
-							combined.append_char('.');
-							combined.append(fn_name.text);
-							name = combined.str_view();
-							name_offset = stream.tokens.entries[lparen_idx - 3].offset;
-							name_len = (fn_name.offset + fn_name.len) - stream.tokens.entries[lparen_idx - 3].offset;
+							parent_type = stream.tokens.entries[lparen_idx - 3].text;
+							name = fn_name.text;
+							name_offset = fn_name.offset;
+							name_len = fn_name.len;
+							decl_offset = stream.tokens.entries[lparen_idx - 3].offset;
 						}
 						else
 						{
@@ -85,7 +96,7 @@ fn void encode_document_symbols(String content, DString* out)
 							name_offset = fn_name.offset;
 							name_len = fn_name.len;
 						}
-						kind = 12; // Function
+						kind = 6; // Method for all functions, will be nested if has parent
 						has_braces = true;
 					}
 				}
@@ -191,20 +202,76 @@ fn void encode_document_symbols(String content, DString* out)
 		usz sel_end_line = sel_line;
 		usz sel_end_char = sel_char + name_len;
 
-		if (!first) out.append_char(',');
-		DocumentSymbol sym = {
-			.name = name,
-			.kind = kind,
-			.range = {
-				.start = {.line = decl_line, .character = decl_char},
-				.end = {.line = end_line, .character = end_char},
+		entries[entry_count] = {
+			.sym = {
+				.name = name,
+				.kind = kind,
+				.range = {
+					.start = {.line = decl_line, .character = decl_char},
+					.end = {.line = end_line, .character = end_char},
+				},
+				.selection_range = {
+					.start = {.line = sel_line, .character = sel_char},
+					.end = {.line = sel_end_line, .character = sel_end_char},
+				},
 			},
-			.selection_range = {
-				.start = {.line = sel_line, .character = sel_char},
-				.end = {.line = sel_end_line, .character = sel_end_char},
-			},
+			.parent_type = parent_type,
 		};
-		sym.encode(out);
+		entry_count++;
+	}
+
+	// Second pass: nest methods under their parent type symbols
+	// Flat pool for all children across all parents
+	DocumentSymbol[MAX_SYMBOLS] children_pool;
+	usz pool_used = 0;
+
+	for (usz i = 0; i < entry_count; i++)
+	{
+		int k = entries[i].sym.kind;
+		// Only types can have children (struct, enum, interface)
+		if (k != 23 && k != 10 && k != 11) continue;
+		String type_name = entries[i].sym.name;
+
+		usz start = pool_used;
+		for (usz j = 0; j < entry_count; j++)
+		{
+			if (pool_used >= MAX_SYMBOLS) break;
+			if (entries[j].parent_type.len > 0 && entries[j].parent_type == type_name)
+			{
+				children_pool[pool_used] = entries[j].sym;
+				pool_used++;
+				entries[j].is_child = true;
+			}
+		}
+
+		if (pool_used > start)
+		{
+			entries[i].sym.children = children_pool[start..pool_used - 1];
+		}
+	}
+
+	// Encode: output top-level symbols only
+	bool first = true;
+	for (usz i = 0; i < entry_count; i++)
+	{
+		if (entries[i].is_child) continue;
+
+		if (entries[i].sym.kind == 6)
+		{
+			if (entries[i].parent_type.len > 0)
+			{
+				// Orphan method (no matching struct in this file) — show as Type.method
+				DString combined = dstring::temp();
+				combined.append(entries[i].parent_type);
+				combined.append_char('.');
+				combined.append(entries[i].sym.name);
+				entries[i].sym.name = combined.str_view();
+			}
+			entries[i].sym.kind = 12; // Function
+		}
+
+		if (!first) out.append_char(',');
+		entries[i].sym.encode(out);
 		first = false;
 	}
 }

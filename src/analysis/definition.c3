@@ -361,7 +361,7 @@ fn String TokenList.find_variable_type(&self, String var_name)
 				if (i + 2 < self.size)
 				{
 					TokenType next = self.entries[i + 2].type;
-					if (next == EOS || next == EQ || next == COMMA || next == DOT)
+					if (next == EOS || next == EQ || next == COMMA || next == DOT || next == RPAREN)
 					{
 						return self.get(i).text;
 					}
@@ -373,7 +373,7 @@ fn String TokenList.find_variable_type(&self, String var_name)
 				if (i + 3 < self.size)
 				{
 					TokenType next = self.entries[i + 3].type;
-					if (next == EOS || next == EQ || next == COMMA || next == DOT)
+					if (next == EOS || next == EQ || next == COMMA || next == DOT || next == RPAREN)
 					{
 						return self.get(i).text;
 					}

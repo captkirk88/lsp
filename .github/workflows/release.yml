@@ -66,6 +66,11 @@ jobs:
           c3c build lsp -O2
           cd build && zip ../c3-lsp-linux-x86_64.zip lsp
 
+      - name: Install aarch64 cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build Linux aarch64
         run: |
           c3c build lsp --target linux-aarch64 -O2 --build-dir build-linux-aarch64 --output-dir build-linux-aarch64

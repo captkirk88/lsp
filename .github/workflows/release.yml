@@ -73,7 +73,8 @@ jobs:
 
       - name: Build Linux aarch64
         run: |
-          c3c build lsp --target linux-aarch64 -O2 --build-dir build-linux-aarch64 --output-dir build-linux-aarch64
+          CRTBEGIN_DIR=$(dirname $(aarch64-linux-gnu-gcc -print-file-name=crtbegin.o))
+          c3c build lsp --target linux-aarch64 -O2 --build-dir build-linux-aarch64 --output-dir build-linux-aarch64 --linux-crt /usr/aarch64-linux-gnu/lib --linux-crtbegin "$CRTBEGIN_DIR"
           cd build-linux-aarch64 && zip ../c3-lsp-linux-aarch64.zip lsp
 
       - name: Cache MSVC SDK

@@ -59,10 +59,10 @@ fn String read_message(InStream stream)
 
 		// Read exactly content_length bytes
 		char[] body = mem::new_array(char, content_length);
-		usz read_so_far = 0;
+		sz read_so_far = 0;
 		while (read_so_far < content_length)
 		{
-			usz n = stream.read(body[read_so_far..content_length - 1]) ?? 0;
+			sz n = stream.read(body[read_so_far..content_length - 1]) ?? 0;
 			if (n == 0)
 			{
 				mem::free(body);

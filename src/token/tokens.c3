@@ -8,7 +8,7 @@ alias TokenList = List{Token};
 
 // Semantic token categories for LSP semantic highlighting.
 // The index value corresponds to the position in TOKEN_TYPES_LEGEND.
-enum SemanticCategory : inline char (int index)
+enum SemanticCategory : char (int index)
 {
 	NAMESPACE   { 0 },
 	TYPE        { 1 },
@@ -216,7 +216,7 @@ fn String get_token_description(TokenType t, String text)
 		case IPTR: return "`iptr` — Signed pointer-sized integer";
 		case UPTR: return "`uptr` — Unsigned pointer-sized integer";
 		case ISZ: return "`isz` — Signed size type";
-		case USZ: return "`usz` — Unsigned size type";
+		case USZ: return "`sz` — Unsigned size type";
 		case FAULT: return "`fault` — Fault type for error handling";
 		case ANY: return "`any` — Type-erased interface type";
 		case TYPEID: return "`typeid` — Runtime type identifier";

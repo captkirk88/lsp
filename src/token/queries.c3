@@ -9,7 +9,7 @@ import c3::lexer;
 
 // Find the declaration of a token in the stream
 // Returns the token at the declaration site
-fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
+fn Token? TokenStream.find_declaration_of(&self, Token target, sz target_idx)
 {
 	String name = target.text;
 
@@ -17,7 +17,7 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 	{
 		case TYPE_IDENT:
 			// Search for: struct/union/bitstruct/enum/faultdef/interface/typedef/constdef/alias TYPE_IDENT
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				TokenType kw = self.tokens.get(i).type;
 				if (is_type_declaration_keyword(kw))
@@ -32,7 +32,7 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 
 		case CONST_IDENT:
 			// constdef NAME
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				if (self.tokens.get(i).type == CONSTDEF)
 				{
@@ -45,7 +45,7 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 			}
 
 			// const [Type] NAME = ...
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				if (self.tokens.get(i).type != CONST) continue;
 				// const NAME = ... (no type)
@@ -66,17 +66,17 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 			}
 
 			// enum member: enum Foo { NAME, ... }
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				TokenType kw = self.tokens.get(i).type;
 				if (kw != ENUM && kw != FAULTDEF) continue;
 				// Find opening brace
-				usz brace = i + 1;
+				sz brace = i + 1;
 				while (brace < self.tokens.size && self.tokens.get(brace).type != LBRACE) brace++;
 				if (brace >= self.tokens.size) continue;
 				// Scan enum body
-				usz depth = 1;
-				for (usz j = brace + 1; j < self.tokens.size && depth > 0; j++)
+				sz depth = 1;
+				for (sz j = brace + 1; j < self.tokens.size && depth > 0; j++)
 				{
 					Token t = self.tokens.get(j);
 					if (t.type == LBRACE)
@@ -97,11 +97,11 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 		case IDENT:
 		case AT_IDENT:
 			// fn ... name( or macro ... name(
-			for (usz i = 0; i < self.tokens.size; i++)
+			for (sz i = 0; i < self.tokens.size; i++)
 			{
 				TokenType kw = self.tokens.get(i).type;
 				if (kw != FUNC && kw != MACRO) continue;
-				for (usz j = i + 1; j < self.tokens.size && j < i + 64; j++)
+				for (sz j = i + 1; j < self.tokens.size && j < i + 64; j++)
 				{
 					Token t = self.tokens.get(j);
 					if (t.type == LPAREN)
@@ -121,7 +121,7 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 			}
 
 			// macro name (no parens)
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				if (self.tokens.get(i).type == MACRO)
 				{
@@ -134,7 +134,7 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 			}
 
 			// type IDENT = ... (variable declaration)
-			for (usz i = 0; i + 1 < self.tokens.size; i++)
+			for (sz i = 0; i + 1 < self.tokens.size; i++)
 			{
 				Token t = self.tokens.get(i);
 				if (is_type_token(t.type))
@@ -162,9 +162,9 @@ fn Token? TokenStream.find_declaration_of(&self, Token target, usz target_idx)
 }
 
 // Count references to a token in the stream
-fn usz TokenStream.count_refs(&self, Token target)
+fn sz TokenStream.count_refs(&self, Token target)
 {
-	usz count = 0;
+	sz count = 0;
 	foreach (tok : self.tokens)
 	{
 		if (tok.type == target.type && tok.text == target.text)
@@ -176,7 +176,7 @@ fn usz TokenStream.count_refs(&self, Token target)
 }
 
 // Check if a reference exists in a specific offset range
-fn bool TokenStream.has_ref_in_range(&self, Token target, usz start_offset, usz end_offset)
+fn bool TokenStream.has_ref_in_range(&self, Token target, sz start_offset, sz end_offset)
 {
 	foreach (tok : self.tokens)
 	{
@@ -194,7 +194,7 @@ fn bool TokenStream.has_ref_in_range(&self, Token target, usz start_offset, usz 
 // Find the type name of a variable by scanning for TYPE_IDENT var_name or TYPE_IDENT* var_name patterns.
 fn String TokenStream.find_variable_type(&self, String var_name)
 {
-	for (usz i = 0; i + 1 < self.tokens.size; i++)
+	for (sz i = 0; i + 1 < self.tokens.size; i++)
 	{
 		Token type_tok = self.tokens.get(i);
 		if (type_tok.type != TYPE_IDENT) continue;
@@ -236,7 +236,7 @@ fn String TokenStream.find_variable_type(&self, String var_name)
 // e.g. alias TokenList = List{Token} -> "List"
 fn String TokenStream.resolve_type_alias(&self, String type_name)
 {
-	for (usz i = 0; i + 3 < self.tokens.size; i++)
+	for (sz i = 0; i + 3 < self.tokens.size; i++)
 	{
 		Token kw = self.tokens.get(i);
 		Token name = self.tokens.get(i + 1);
@@ -252,7 +252,7 @@ fn String TokenStream.resolve_type_alias(&self, String type_name)
 }
 
 // Detect method call context (IDENT DOT IDENT) and resolve receiver type
-fn String TokenStream.resolve_method_type(&self, usz cursor_idx)
+fn String TokenStream.resolve_method_type(&self, sz cursor_idx)
 {
 	if (cursor_idx < 2) return "";
 
@@ -272,17 +272,17 @@ fn String TokenStream.resolve_method_type(&self, usz cursor_idx)
 }
 
 // Find function scope boundaries containing a given offset
-fn usz[2]? TokenStream.find_function_scope(&self, usz offset)
+fn sz[2]? TokenStream.find_function_scope(&self, sz offset)
 {
-	for (usz i = 0; i < self.tokens.size; i++)
+	for (sz i = 0; i < self.tokens.size; i++)
 	{
 		TokenType tt = self.tokens.get(i).type;
 		if (tt != FUNC && tt != MACRO) continue;
 
 		// Find the opening brace of this function
-		usz brace_idx = 0;
-		usz paren_start = 0;
-		for (usz j = i + 1; j < self.tokens.size; j++)
+		sz brace_idx = 0;
+		sz paren_start = 0;
+		for (sz j = i + 1; j < self.tokens.size; j++)
 		{
 			TokenType jt = self.tokens.get(j).type;
 			if (paren_start == 0 && jt == LPAREN)
@@ -302,8 +302,8 @@ fn usz[2]? TokenStream.find_function_scope(&self, usz offset)
 		Token? close = self.skip_to_matching(brace_idx);
 		if (try c = close)
 		{
-			usz brace_start = self.tokens.get(brace_idx).offset;
-			usz brace_end = c.offset + c.len;
+			sz brace_start = self.tokens.get(brace_idx).offset;
+			sz brace_end = c.offset + c.len;
 
 			// Check if offset is in function body
 			if (offset >= brace_start && offset < brace_end)
@@ -322,9 +322,9 @@ fn usz[2]? TokenStream.find_function_scope(&self, usz offset)
 }
 
 // Find the index of a token by its offset
-fn usz? TokenStream.index_of(&self, Token target)
+fn sz? TokenStream.index_of(&self, Token target)
 {
-	for (usz i = 0; i < self.tokens.size; i++)
+	for (sz i = 0; i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
 		if (tok.offset == target.offset && tok.len == target.len)
@@ -347,13 +347,13 @@ fn bool TokenStream.is_at_declaration(&self, Token target)
 }
 
 // Get the signature range of a declaration (from keyword to before body)
-fn usz[2]? TokenStream.declaration_signature_range(&self, usz decl_idx)
+fn sz[2]? TokenStream.declaration_signature_range(&self, sz decl_idx)
 {
 	if (decl_idx >= self.tokens.size) return OUT_OF_BOUNDS~;
 
 	// Walk back to find declaration keyword
-	usz keyword_idx = decl_idx;
-	for (usz i = decl_idx; i > 0; i--)
+	sz keyword_idx = decl_idx;
+	for (sz i = decl_idx; i > 0; i--)
 	{
 		TokenType t = self.tokens.get(i - 1).type;
 		if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM || t == BITSTRUCT || t == INTERFACE || t == FAULTDEF || t == CONSTDEF || t == TYPEDEF || t == ALIAS || t == ATTRDEF)
@@ -364,11 +364,11 @@ fn usz[2]? TokenStream.declaration_signature_range(&self, usz decl_idx)
 		if (t == RBRACE || t == EOS || t == LBRACE) break;
 	}
 
-	usz start = self.tokens.get(keyword_idx).offset;
-	usz end = start;
+	sz start = self.tokens.get(keyword_idx).offset;
+	sz end = start;
 
 	// Find end: up to '{' or ';' or end of stream
-	for (usz i = keyword_idx; i < self.tokens.size; i++)
+	for (sz i = keyword_idx; i < self.tokens.size; i++)
 	{
 		Token t = self.tokens.get(i);
 		if (t.type == LBRACE || t.type == EOS)

@@ -4,8 +4,8 @@ import std::core::dstring;
 import std::core::mem;
 import c3::lexer;
 
-const usz MAX_LOOKAHEAD = 64;
-const usz MAX_SYMBOLS = 512;
+const sz MAX_LOOKAHEAD = 64;
+const sz MAX_SYMBOLS = 512;
 
 struct SymbolEntry
 {
@@ -22,9 +22,9 @@ fn void encode_document_symbols(String content, DString* out)
 
 	// Collect all symbols first
 	SymbolEntry[MAX_SYMBOLS] entries;
-	usz entry_count = 0;
+	sz entry_count = 0;
 
-	for (usz i = 0; i < stream.tokens.size; i++)
+	for (sz i = 0; i < stream.tokens.size; i++)
 	{
 		if (entry_count >= MAX_SYMBOLS) break;
 
@@ -32,10 +32,10 @@ fn void encode_document_symbols(String content, DString* out)
 		String name = "";
 		String parent_type = "";
 		int kind = 0;
-		usz name_offset = 0;
-		usz name_len = 0;
-		usz decl_offset = tok.offset;
-		usz end_offset = 0;
+		sz name_offset = 0;
+		sz name_len = 0;
+		sz decl_offset = tok.offset;
+		sz end_offset = 0;
 		bool has_braces = false;
 
 		switch (tok.type)
@@ -65,8 +65,8 @@ fn void encode_document_symbols(String content, DString* out)
 			case FUNC:
 				// fn ... IDENT LPAREN — the IDENT before LPAREN is the name
 				// If preceded by TYPE_IDENT DOT, it's a method
-				usz lparen_idx = 0;
-				for (usz j = i + 1; j < stream.tokens.size && j < i + MAX_LOOKAHEAD; j++)
+				sz lparen_idx = 0;
+				for (sz j = i + 1; j < stream.tokens.size && j < i + MAX_LOOKAHEAD; j++)
 				{
 					if (stream.tokens.entries[j].type == LPAREN)
 					{
@@ -192,15 +192,15 @@ fn void encode_document_symbols(String content, DString* out)
 		}
 
 		// Build range and selectionRange using line offsets
-		usz decl_line = lo.find_line(decl_offset);
-		usz decl_char = decl_offset - lo.entries[decl_line];
-		usz end_line = lo.find_line(end_offset > 0 ? end_offset - 1 : 0);
-		usz end_char = (end_offset > 0 ? end_offset : 1) - lo.entries[end_line];
+		sz decl_line = lo.find_line(decl_offset);
+		sz decl_char = decl_offset - lo.entries[decl_line];
+		sz end_line = lo.find_line(end_offset > 0 ? end_offset - 1 : 0);
+		sz end_char = (end_offset > 0 ? end_offset : 1) - lo.entries[end_line];
 
-		usz sel_line = lo.find_line(name_offset);
-		usz sel_char = name_offset - lo.entries[sel_line];
-		usz sel_end_line = sel_line;
-		usz sel_end_char = sel_char + name_len;
+		sz sel_line = lo.find_line(name_offset);
+		sz sel_char = name_offset - lo.entries[sel_line];
+		sz sel_end_line = sel_line;
+		sz sel_end_char = sel_char + name_len;
 
 		entries[entry_count] = {
 			.sym = {
@@ -223,17 +223,17 @@ fn void encode_document_symbols(String content, DString* out)
 	// Second pass: nest methods under their parent type symbols
 	// Flat pool for all children across all parents
 	DocumentSymbol[MAX_SYMBOLS] children_pool;
-	usz pool_used = 0;
+	sz pool_used = 0;
 
-	for (usz i = 0; i < entry_count; i++)
+	for (sz i = 0; i < entry_count; i++)
 	{
 		int k = entries[i].sym.kind;
 		// Only types can have children (struct, enum, interface)
 		if (k != 23 && k != 10 && k != 11) continue;
 		String type_name = entries[i].sym.name;
 
-		usz start = pool_used;
-		for (usz j = 0; j < entry_count; j++)
+		sz start = pool_used;
+		for (sz j = 0; j < entry_count; j++)
 		{
 			if (pool_used >= MAX_SYMBOLS) break;
 			if (entries[j].parent_type.len > 0 && entries[j].parent_type == type_name)
@@ -252,7 +252,7 @@ fn void encode_document_symbols(String content, DString* out)
 
 	// Encode: output top-level symbols only
 	bool first = true;
-	for (usz i = 0; i < entry_count; i++)
+	for (sz i = 0; i < entry_count; i++)
 	{
 		if (entries[i].is_child) continue;
 
@@ -276,9 +276,9 @@ fn void encode_document_symbols(String content, DString* out)
 	}
 }
 
-fn usz TokenList.find_eos_end(&self, usz start)
+fn sz TokenList.find_eos_end(&self, sz start)
 {
-	for (usz j = start; j < self.size; j++)
+	for (sz j = start; j < self.size; j++)
 	{
 		if (self.entries[j].type == EOS)
 		{
@@ -288,11 +288,11 @@ fn usz TokenList.find_eos_end(&self, usz start)
 	return 0;
 }
 
-fn usz TokenList.find_brace_end(&self, usz start)
+fn sz TokenList.find_brace_end(&self, sz start)
 {
-	usz depth = 0;
+	sz depth = 0;
 	bool found_brace = false;
-	for (usz j = start; j < self.size; j++)
+	for (sz j = start; j < self.size; j++)
 	{
 		if (self.entries[j].type == LBRACE)
 		{

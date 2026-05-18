@@ -18,7 +18,7 @@ struct AnalysisContext
 	DocumentList* open_docs;
 	String project_root;
 	String[MAX_SEARCH_DIRS] search_dirs;
-	usz search_dir_count;
+	sz search_dir_count;
 	String stdlib_path;
 }
 
@@ -35,7 +35,7 @@ fn AnalysisContext analysis_context_init(TokenStream* current, DocumentList* ope
 	pdirs.get_search_dirs(file_path);
 	ctx.project_root = pdirs.project_root;
 	ctx.search_dir_count = pdirs.count;
-	for (usz i = 0; i < pdirs.count && i < MAX_SEARCH_DIRS; i++)
+	for (sz i = 0; i < pdirs.count && i < MAX_SEARCH_DIRS; i++)
 	{
 		ctx.search_dirs[i] = pdirs.dirs[i];
 	}
@@ -54,7 +54,7 @@ fn Location? AnalysisContext.find_definition(&self, Token target)
 	}
 
 	// 2. Search open documents
-	for (usz i = 0; i < self.open_docs.size; i++)
+	for (sz i = 0; i < self.open_docs.size; i++)
 	{
 		Document doc = self.open_docs.entries[i];
 		TokenStream stream = token_stream_tokenize(doc.content);
@@ -92,7 +92,7 @@ fn Location? AnalysisContext.find_definition(&self, Token target)
 // Scan project directories for definition
 fn Location? AnalysisContext.scan_project_for_definition(&self, Token target)
 {
-	for (usz i = 0; i < self.search_dir_count; i++)
+	for (sz i = 0; i < self.search_dir_count; i++)
 	{
 		DString p = dstring::temp();
 		p.appendf("%s/%s", self.project_root, self.search_dirs[i]);
@@ -118,7 +118,7 @@ fn Location? AnalysisContext.scan_dir_for_definition(&self, String dir_path, Tok
 	if (depth > MAX_SCAN_DEPTH) return TOKEN_NOT_FOUND~;
 
 	Path p;
-	if (try pp = path::temp(dir_path))
+	if (try pp = path::tnew(dir_path))
 	{
 		p = pp;
 	}
@@ -138,13 +138,13 @@ fn Location? AnalysisContext.scan_dir_for_definition(&self, String dir_path, Tok
 	}
 	defer
 	{
-		foreach (&e : entries) e.free();
+		foreach (&e : entries) e.free(mem);
 		entries.free();
 	}
 
 	foreach (entry : entries)
 	{
-		String entry_name = entry.str_view();
+		String entry_name = (String)entry;
 
 		// Build full path
 		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);

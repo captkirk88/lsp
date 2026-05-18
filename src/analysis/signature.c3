@@ -8,7 +8,7 @@ import c3::lexer;
 // Finds the function being called at cursor position by walking backwards
 // to find the function name, then searches the file for its declaration
 // to extract the full signature.
-fn void encode_signature_help(String content, usz offset, DString* out)
+fn void encode_signature_help(String content, sz offset, DString* out)
 {
 	TokenStream stream = token_stream_tokenize(content);
 	defer stream.free();
@@ -17,12 +17,12 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 	// Walk backwards to find the function call context:
 	// We need to find IDENT LPAREN ... cursor
 	// Handle nested parens by tracking depth
-	usz call_name_idx = stream.tokens.size; // sentinel = not found
-	usz active_param = 0;
+	sz call_name_idx = stream.tokens.size; // sentinel = not found
+	sz active_param = 0;
 
 	// Find the token index at or just before cursor
-	usz cursor_tok_idx = 0;
-	for (usz i = 0; i < stream.tokens.size; i++)
+	sz cursor_tok_idx = 0;
+	for (sz i = 0; i < stream.tokens.size; i++)
 	{
 		if (stream.tokens[i].offset <= offset)
 		{
@@ -35,11 +35,11 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 	}
 
 	// Walk backwards from cursor, tracking paren depth
-	usz depth = 0;
-	usz comma_count = 0;
-	for (usz ii = 0; ii <= cursor_tok_idx; ii++)
+	sz depth = 0;
+	sz comma_count = 0;
+	for (sz ii = 0; ii <= cursor_tok_idx; ii++)
 	{
-		usz i = cursor_tok_idx - ii;
+		sz i = cursor_tok_idx - ii;
 		TokenType tt = stream.tokens[i].type;
 		if (tt == RPAREN)
 		{
@@ -75,13 +75,13 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 
 	// Search for the function declaration in the file
 	// Pattern: FUNC ... fn_name LPAREN params RPAREN
-	for (usz i = 0; i < stream.tokens.size; i++)
+	for (sz i = 0; i < stream.tokens.size; i++)
 	{
 		if (stream.tokens[i].type != FUNC) continue;
 
 		// Find LPAREN after FUNC
-		usz lparen_idx = 0;
-		for (usz j = i + 1; j < stream.tokens.size && j < i + 64; j++)
+		sz lparen_idx = 0;
+		for (sz j = i + 1; j < stream.tokens.size && j < i + 64; j++)
 		{
 			if (stream.tokens[j].type == LPAREN)
 			{
@@ -96,12 +96,12 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 		if (!is_ident(stream.tokens[lparen_idx - 1].type) || stream.tokens[lparen_idx - 1].text != fn_name) continue;
 
 		// Found the declaration. Extract signature from FUNC to closing RPAREN or LBRACE
-		usz sig_start = stream.tokens[i].offset;
-		usz sig_end = sig_start;
-		usz paren_depth = 0;
+		sz sig_start = stream.tokens[i].offset;
+		sz sig_end = sig_start;
+		sz paren_depth = 0;
 		bool found_sig_end = false;
 
-		for (usz j = lparen_idx; j < stream.tokens.size; j++)
+		for (sz j = lparen_idx; j < stream.tokens.size; j++)
 		{
 			if (stream.tokens[j].type == LPAREN)
 			{
@@ -133,10 +133,10 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 		DString params_json = dstring::temp();
 		params_json.append_char('[');
 		bool first_param = true;
-		usz param_start_offset = stream.tokens[lparen_idx].offset + 1; // after '('
+		sz param_start_offset = stream.tokens[lparen_idx].offset + 1; // after '('
 		paren_depth = 1;
 
-		for (usz j = lparen_idx + 1; j < stream.tokens.size; j++)
+		for (sz j = lparen_idx + 1; j < stream.tokens.size; j++)
 		{
 			if (stream.tokens[j].type == LPAREN)
 			{
@@ -148,7 +148,7 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 				if (paren_depth == 0)
 				{
 					// Emit last parameter
-					usz param_end_offset = stream.tokens[j].offset;
+					sz param_end_offset = stream.tokens[j].offset;
 					if (param_end_offset > param_start_offset)
 					{
 						String param_text = content[param_start_offset..param_end_offset - 1].trim();
@@ -167,7 +167,7 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 			else if (stream.tokens[j].type == COMMA && paren_depth == 1)
 			{
 				// Emit parameter
-				usz param_end_offset = stream.tokens[j].offset;
+				sz param_end_offset = stream.tokens[j].offset;
 				if (param_end_offset > param_start_offset)
 				{
 					String param_text = content[param_start_offset..param_end_offset - 1].trim();
@@ -195,17 +195,17 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 	}
 
 	// Also search for macro declarations: macro fn_name(
-	for (usz i = 0; i + 1 < stream.tokens.size; i++)
+	for (sz i = 0; i + 1 < stream.tokens.size; i++)
 	{
 		if (stream.tokens[i].type != MACRO) continue;
 		if (!is_ident(stream.tokens[i + 1].type) || stream.tokens[i + 1].text != fn_name) continue;
 		if (i + 2 >= stream.tokens.size || stream.tokens[i + 2].type != LPAREN) continue;
 
-		usz sig_start = stream.tokens[i].offset;
-		usz sig_end = sig_start;
-		usz paren_depth = 0;
+		sz sig_start = stream.tokens[i].offset;
+		sz sig_end = sig_start;
+		sz paren_depth = 0;
 
-		for (usz j = i + 2; j < stream.tokens.size; j++)
+		for (sz j = i + 2; j < stream.tokens.size; j++)
 		{
 			if (stream.tokens[j].type == LPAREN)
 			{
@@ -233,10 +233,10 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 		DString params_json = dstring::temp();
 		params_json.append_char('[');
 		bool first_param = true;
-		usz param_start_offset = stream.tokens[i + 2].offset + 1;
+		sz param_start_offset = stream.tokens[i + 2].offset + 1;
 		paren_depth = 1;
 
-		for (usz j = i + 3; j < stream.tokens.size; j++)
+		for (sz j = i + 3; j < stream.tokens.size; j++)
 		{
 			if (stream.tokens[j].type == LPAREN)
 			{
@@ -247,7 +247,7 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 				paren_depth--;
 				if (paren_depth == 0)
 				{
-					usz param_end_offset = stream.tokens[j].offset;
+					sz param_end_offset = stream.tokens[j].offset;
 					if (param_end_offset > param_start_offset)
 					{
 						String param_text = content[param_start_offset..param_end_offset - 1].trim();
@@ -265,7 +265,7 @@ fn void encode_signature_help(String content, usz offset, DString* out)
 			}
 			else if (stream.tokens[j].type == COMMA && paren_depth == 1)
 			{
-				usz param_end_offset = stream.tokens[j].offset;
+				sz param_end_offset = stream.tokens[j].offset;
 				if (param_end_offset > param_start_offset)
 				{
 					String param_text = content[param_start_offset..param_end_offset - 1].trim();

@@ -6,8 +6,8 @@ import std::core::mem;
 // Data structures for encoding
 struct Position
 {
-	usz line;
-	usz character;
+	sz line;
+	sz character;
 }
 
 struct Range
@@ -73,17 +73,17 @@ struct SignatureInformation
 
 struct SemanticToken
 {
-	usz line;
-	usz character;
-	usz length;
+	sz line;
+	sz character;
+	sz length;
 	int token_type;
 	int token_modifiers;
 }
 
 struct FoldingRange
 {
-	usz start_line;
-	usz end_line;
+	sz start_line;
+	sz end_line;
 	String kind;
 }
 

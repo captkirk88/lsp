@@ -7,13 +7,13 @@ import std::time;
 
 const TOKEN_TYPES_LEGEND = `["namespace","type","enum","struct","variable","function","macro","keyword","decorator","comment","string","number","operator","enumMember"]`;
 
-fn usz position_to_offset(String content, int line, int character)
+fn sz position_to_offset(String content, int line, int character)
 {
 	LineOffsets lo;
 	lo.init(mem);
 	defer lo.free();
 	lo.build(content);
-	if ((usz)line < lo.size) return lo.entries[(usz)line] + (usz)character;
+	if ((sz)line < lo.size) return lo.entries[(sz)line] + (sz)character;
 	return 0;
 }
 
@@ -221,7 +221,7 @@ fn void LspServer.handle_hover(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	DString data = dstring::temp();
 	encode_hover(uri, doc.content, offset, &self.documents, self.stdlib_path, &data);
@@ -252,7 +252,7 @@ fn void LspServer.handle_completion(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 	if (offset > doc.content.len)
 	{
 		offset = doc.content.len;
@@ -280,7 +280,7 @@ fn void LspServer.handle_definition(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	DString data = dstring::temp();
 	encode_definition(uri, doc.content, offset, &self.documents, self.stdlib_path, &data);
@@ -311,7 +311,7 @@ fn void LspServer.handle_signature_help(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	DString data = dstring::temp();
 	encode_signature_help(doc.content, offset, &data);
@@ -342,7 +342,7 @@ fn void LspServer.handle_document_highlight(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	DString data = dstring::temp();
 	encode_document_highlights(doc.content, offset, &data);
@@ -373,7 +373,7 @@ fn void LspServer.handle_references(&self, Object* msg, String id_json)
 	int line = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	bool include_decl = true;
 	if (try ctx = msg.get("params")!!.get("context"))
@@ -417,7 +417,7 @@ fn void LspServer.handle_rename(&self, Object* msg, String id_json)
 		return;
 	}
 
-	usz offset = position_to_offset(doc.content, line, character);
+	sz offset = position_to_offset(doc.content, line, character);
 
 	DString data = dstring::temp();
 	encode_rename(uri, doc.content, offset, &self.documents, self.stdlib_path, new_name, &data);

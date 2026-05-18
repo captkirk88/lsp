@@ -15,7 +15,7 @@ struct TokenStream
 	TokenList tokens;
 	String content;
 	LineOffsets* line_cache;
-	usz index; // Current position for navigation
+	sz index; // Current position for navigation
 }
 
 // Initialize from content by tokenizing
@@ -83,25 +83,25 @@ fn LineOffsets* TokenStream.get_line_offsets(&self)
 fn Range TokenStream.token_to_range(&self, Token tok)
 {
 	LineOffsets* lo = self.get_line_offsets();
-	usz line = lo.find_line(tok.offset);
-	usz col = tok.offset - lo.entries[line];
-	usz end_col = col + tok.len;
+	sz line = lo.find_line(tok.offset);
+	sz col = tok.offset - lo.entries[line];
+	sz end_col = col + tok.len;
 	return (Range) { .start = { .line = line, .character = col }, .end = { .line = line, .character = end_col } };
 }
 
 // Core accessors with C3 error handling using ?
-fn Token? TokenStream.at(&self, usz idx)
+fn Token? TokenStream.at(&self, sz idx)
 {
 	if (idx >= self.tokens.size) return OUT_OF_BOUNDS~;
 	return self.tokens.get(idx);
 }
 
-fn Token? TokenStream.find_at(&self, usz offset)
+fn Token? TokenStream.find_at(&self, sz offset)
 {
-	for (usz i = 0; i < self.tokens.size; i++)
+	for (sz i = 0; i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
-		usz tok_end = tok.offset + tok.len;
+		sz tok_end = tok.offset + tok.len;
 		if (tok.offset <= offset && offset < tok_end)
 		{
 			return tok;
@@ -110,11 +110,11 @@ fn Token? TokenStream.find_at(&self, usz offset)
 	// Try offset-1 for cursor at end of word
 	if (offset > 0)
 	{
-		usz adj = offset - 1;
-		for (usz i = 0; i < self.tokens.size; i++)
+		sz adj = offset - 1;
+		for (sz i = 0; i < self.tokens.size; i++)
 		{
 			Token tok = self.tokens.get(i);
-			usz tok_end = tok.offset + tok.len;
+			sz tok_end = tok.offset + tok.len;
 			if (tok.offset <= adj && adj < tok_end)
 			{
 				return tok;
@@ -124,7 +124,7 @@ fn Token? TokenStream.find_at(&self, usz offset)
 	return TOKEN_NOT_FOUND~;
 }
 
-fn Token? TokenStream.find_ident_at(&self, usz offset)
+fn Token? TokenStream.find_ident_at(&self, sz offset)
 {
 	Token? tok_result = self.find_at(offset);
 	if (try tok = tok_result)
@@ -159,12 +159,12 @@ fn Token? TokenStream.find_ident_at(&self, usz offset)
 }
 
 // Get token index at offset
-fn usz? TokenStream.index_at(&self, usz offset)
+fn sz? TokenStream.index_at(&self, sz offset)
 {
-	for (usz i = 0; i < self.tokens.size; i++)
+	for (sz i = 0; i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
-		usz tok_end = tok.offset + tok.len;
+		sz tok_end = tok.offset + tok.len;
 		if (tok.offset <= offset && offset < tok_end)
 		{
 			return i;
@@ -172,11 +172,11 @@ fn usz? TokenStream.index_at(&self, usz offset)
 	}
 	if (offset > 0)
 	{
-		usz adj = offset - 1;
-		for (usz i = 0; i < self.tokens.size; i++)
+		sz adj = offset - 1;
+		for (sz i = 0; i < self.tokens.size; i++)
 		{
 			Token tok = self.tokens.get(i);
-			usz tok_end = tok.offset + tok.len;
+			sz tok_end = tok.offset + tok.len;
 			if (tok.offset <= adj && adj < tok_end)
 			{
 				return i;
@@ -187,25 +187,25 @@ fn usz? TokenStream.index_at(&self, usz offset)
 }
 
 // Line/Column with caching
-fn usz? TokenStream.line_of(&self, usz offset)
+fn sz? TokenStream.line_of(&self, sz offset)
 {
 	if (offset > self.content.len) return OUT_OF_BOUNDS~;
 	LineOffsets* lo = self.get_line_offsets();
 	return lo.find_line(offset);
 }
 
-fn usz? TokenStream.col_of(&self, usz offset)
+fn sz? TokenStream.col_of(&self, sz offset)
 {
 	if (offset > self.content.len) return OUT_OF_BOUNDS~;
 	LineOffsets* lo = self.get_line_offsets();
-	usz line = lo.find_line(offset);
+	sz line = lo.find_line(offset);
 	return offset - lo.entries[line];
 }
 
 // Navigation helpers
-fn Token? TokenStream.next_of_type(&self, TokenType type, usz from_idx)
+fn Token? TokenStream.next_of_type(&self, TokenType type, sz from_idx)
 {
-	for (usz i = from_idx + 1; i < self.tokens.size; i++)
+	for (sz i = from_idx + 1; i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
 		if (tok.type == type) return tok;
@@ -213,10 +213,10 @@ fn Token? TokenStream.next_of_type(&self, TokenType type, usz from_idx)
 	return TOKEN_NOT_FOUND~;
 }
 
-fn Token? TokenStream.prev_of_type(&self, TokenType type, usz from_idx)
+fn Token? TokenStream.prev_of_type(&self, TokenType type, sz from_idx)
 {
 	if (from_idx == 0) return OUT_OF_BOUNDS~;
-	for (usz i = from_idx - 1; i < self.tokens.size; i--)
+	for (sz i = from_idx - 1; i < self.tokens.size; i--)
 	{
 		Token tok = self.tokens.get(i);
 		if (tok.type == type) return tok;
@@ -225,7 +225,7 @@ fn Token? TokenStream.prev_of_type(&self, TokenType type, usz from_idx)
 }
 
 // Skip to matching brace/paren/bracket
-fn Token? TokenStream.skip_to_matching(&self, usz from_idx)
+fn Token? TokenStream.skip_to_matching(&self, sz from_idx)
 {
 	if (from_idx >= self.tokens.size) return OUT_OF_BOUNDS~;
 
@@ -253,8 +253,8 @@ fn Token? TokenStream.skip_to_matching(&self, usz from_idx)
 	// Guard against underflow when going backwards from index 0
 	if (direction < 0 && from_idx == 0) return TOKEN_NOT_FOUND~;
 
-	usz depth = 1;
-	usz i = (usz)((long)from_idx + direction);
+	sz depth = 1;
+	sz i = (sz)((long)from_idx + direction);
 
 	while (i < self.tokens.size)
 	{
@@ -269,16 +269,16 @@ fn Token? TokenStream.skip_to_matching(&self, usz from_idx)
 			if (depth == 0) return tok;
 		}
 		if (direction < 0 && i == 0) break;
-		i = (usz)((long)i + direction);
+		i = (sz)((long)i + direction);
 	}
 
 	return TOKEN_NOT_FOUND~;
 }
 
 // Find end of statement (semicolon or end of stream)
-fn Token? TokenStream.find_eos(&self, usz from_idx)
+fn Token? TokenStream.find_eos(&self, sz from_idx)
 {
-	for (usz i = from_idx; i < self.tokens.size; i++)
+	for (sz i = from_idx; i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
 		if (tok.type == EOS) return tok;
@@ -289,10 +289,10 @@ fn Token? TokenStream.find_eos(&self, usz from_idx)
 // Navigation methods
 
 // Get current position
-fn usz TokenStream.position(&self) => self.index;
+fn sz TokenStream.position(&self) => self.index;
 
 // Set position
-fn void TokenStream.set_position(&self, usz pos)
+fn void TokenStream.set_position(&self, sz pos)
 {
 	self.index = pos;
 }
@@ -329,15 +329,15 @@ fn Token? TokenStream.rewind(&self)
 fn bool TokenStream.at_end(&self) => self.index >= self.tokens.size;
 
 // Peek ahead without moving
-fn Token? TokenStream.peek(&self, usz ahead)
+fn Token? TokenStream.peek(&self, sz ahead)
 {
-	usz target = self.index + ahead;
+	sz target = self.index + ahead;
 	if (target >= self.tokens.size) return OUT_OF_BOUNDS~;
 	return self.tokens.get(target);
 }
 
 // Look behind without rewinding
-fn Token? TokenStream.look_back(&self, usz behind)
+fn Token? TokenStream.look_back(&self, sz behind)
 {
 	if (behind > self.index) return OUT_OF_BOUNDS~;
 	return self.tokens.get(self.index - behind);
@@ -377,7 +377,7 @@ fn bool TokenStream.match_advance(&self, TokenType expected)
 fn bool TokenStream.match_sequence(&self, TokenType[] pattern)
 {
 	if (self.index + pattern.len > self.tokens.size) return false;
-	for (usz i = 0; i < pattern.len; i++)
+	for (sz i = 0; i < pattern.len; i++)
 	{
 		if (self.tokens.get(self.index + i).type != pattern[i])
 		{
@@ -402,7 +402,7 @@ fn Token? TokenStream.skip_past_matching(&self)
 	if (try matched = match_result)
 	{
 		// Find the index of the matched token and move past it
-		for (usz i = self.index + 1; i < self.tokens.size; i++)
+		for (sz i = self.index + 1; i < self.tokens.size; i++)
 		{
 			Token tok = self.tokens.get(i);
 			if (tok.offset == matched.offset && tok.len == matched.len)
@@ -422,14 +422,14 @@ fn Token? TokenStream.skip_past_matching(&self)
 // Check if current position is inside a function body
 fn bool TokenStream.is_in_function_body(&self)
 {
-	usz depth = 0;
-	for (usz i = 0; i < self.index && i < self.tokens.size; i++)
+	sz depth = 0;
+	for (sz i = 0; i < self.index && i < self.tokens.size; i++)
 	{
 		Token tok = self.tokens.get(i);
 		if (tok.type == FUNC || tok.type == MACRO)
 		{
 			// Check if we're after the function signature's opening brace
-			for (usz j = i + 1; j < self.tokens.size && j < self.index; j++)
+			for (sz j = i + 1; j < self.tokens.size && j < self.index; j++)
 			{
 				Token inner = self.tokens.get(j);
 				if (inner.type == LBRACE)
@@ -448,9 +448,9 @@ fn bool TokenStream.is_in_function_body(&self)
 }
 
 // Find end of statement (semicolon) starting from given index
-fn Token? TokenStream.find_eos_end(&self, usz start_idx)
+fn Token? TokenStream.find_eos_end(&self, sz start_idx)
 {
-	for (usz j = start_idx; j < self.tokens.size; j++)
+	for (sz j = start_idx; j < self.tokens.size; j++)
 	{
 		if (self.tokens.get(j).type == EOS)
 		{
@@ -461,11 +461,11 @@ fn Token? TokenStream.find_eos_end(&self, usz start_idx)
 }
 
 // Find matching closing brace starting from given index
-fn Token? TokenStream.find_brace_end(&self, usz start_idx)
+fn Token? TokenStream.find_brace_end(&self, sz start_idx)
 {
-	usz depth = 0;
+	sz depth = 0;
 	bool found_brace = false;
-	for (usz j = start_idx; j < self.tokens.size; j++)
+	for (sz j = start_idx; j < self.tokens.size; j++)
 	{
 		Token tok = self.tokens.get(j);
 		if (tok.type == LBRACE)
@@ -491,12 +491,12 @@ fn TokenIter TokenStream.iter(&self)
 	return { .stream = self, .index = 0 };
 }
 
-fn TokenIter TokenStream.iter_from(&self, usz start)
+fn TokenIter TokenStream.iter_from(&self, sz start)
 {
 	return { .stream = self, .index = start };
 }
 
-fn TokenIter TokenStream.iter_in_range(&self, usz start, usz end)
+fn TokenIter TokenStream.iter_in_range(&self, sz start, sz end)
 {
 	return { .stream = self, .index = start, .end = end };
 }
@@ -504,8 +504,8 @@ fn TokenIter TokenStream.iter_in_range(&self, usz start, usz end)
 struct TokenIter
 {
 	TokenStream* stream;
-	usz index;
-	usz end; // 0 means no limit
+	sz index;
+	sz end; // 0 means no limit
 }
 
 fn Token? TokenIter.next(&self)

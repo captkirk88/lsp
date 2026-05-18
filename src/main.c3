@@ -15,7 +15,7 @@ fn int main(String[] args_in)
 		_setmode(0, 0x8000); // stdin -> O_BINARY
 		_setmode(1, 0x8000); // stdout -> O_BINARY
 	$endif
-
+	
 	args::Option[5] options = {
 		{ .long_name = "version", .short_name = "v", .description = "Print version and exit" },
 		{ .long_name = "stdlib-path", .description = "Path to C3 standard library", .is_value_required = true },

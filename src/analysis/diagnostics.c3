@@ -33,8 +33,8 @@ fn void publish_diagnostics(String uri, String content)
 			}
 
 			// Lexer ln/col are 1-indexed, LSP wants 0-indexed
-			usz line = lex.ln > 0 ? lex.ln - 1 : 0;
-			usz col = lex.col > 0 ? lex.col - 1 : 0;
+			sz line = lex.ln > 0 ? lex.ln - 1 : 0;
+			sz col = lex.col > 0 ? lex.col - 1 : 0;
 
 			if (diag_count > 0) diags.append_char(',');
 

@@ -26,7 +26,7 @@ fn void LspServer.init(&self, String stdlib_path, String compiler_path, long dia
 
 fn void LspServer.handle_message(&self, String message)
 {
-	Object* msg = json::tparse_string(message) ?? null;
+	Object* msg = json::tparse(message) ?? null;
 	if (msg == null)
 	{
 		self.sentry.capture_error("Failed to parse JSON message", "unknown");

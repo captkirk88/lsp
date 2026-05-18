@@ -6,8 +6,8 @@ import std::io::file;
 import std::os::process;
 import std::time;
 
-const usz COMPILER_OUTPUT_BUFFER   = 65536;
-const usz MAX_COMPILER_DIAGNOSTICS = 50;
+const sz COMPILER_OUTPUT_BUFFER   = 65536;
+const sz MAX_COMPILER_DIAGNOSTICS = 50;
 
 // Run c3c build -C --lsp from the project root and publish diagnostics.
 // Falls back to compile-only for standalone files with no project.json.
@@ -23,7 +23,7 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 
 	// Build command line
 	String[10] cmd;
-	usz cmd_len = 0;
+	sz cmd_len = 0;
 	cmd[cmd_len++] = self.compiler_path;
 
 	if (project_root.len > 0)
@@ -74,10 +74,10 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 
 	char[] buf = mem::new_array(char, COMPILER_OUTPUT_BUFFER);
 	defer mem::free(buf);
-	usz total_read = 0;
+	sz total_read = 0;
 	while (total_read < COMPILER_OUTPUT_BUFFER)
 	{
-		usz n = proc.read_stdout(&buf[total_read], COMPILER_OUTPUT_BUFFER - total_read) ?? 0;
+		sz n = proc.read_stdout(&buf[total_read], COMPILER_OUTPUT_BUFFER - total_read) ?? 0;
 		if (n == 0) break;
 		total_read += n;
 	}
@@ -92,11 +92,11 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 	int diag_count = 0;
 
 	// Parse LSPERR lines: LSPERR|severity|"file"|line|col|"message"
-	usz pos = 0;
+	sz pos = 0;
 	while (pos < output.len && diag_count < MAX_COMPILER_DIAGNOSTICS)
 	{
 		// Find next line
-		usz line_end = pos;
+		sz line_end = pos;
 		while (line_end < output.len && output[line_end] != '\n')
 		{
 			line_end++;
@@ -249,8 +249,8 @@ fn bool path_matches_uri(String file_path, String uri) @private
 	if (file_path.len == 0 || uri_path.len == 0) return false;
 
 	// Count matching characters from the end, treating / and \ as equal
-	usz fi = file_path.len;
-	usz ui = uri_path.len;
+	sz fi = file_path.len;
+	sz ui = uri_path.len;
 	while (fi > 0 && ui > 0)
 	{
 		char fc = file_path[fi - 1];
@@ -265,7 +265,7 @@ fn bool path_matches_uri(String file_path, String uri) @private
 			break;
 		}
 	}
-	usz matched = file_path.len - fi;
+	sz matched = file_path.len - fi;
 	if (matched == 0) return false;
 
 	// The divergence point must be at a separator boundary in both paths
@@ -273,7 +273,7 @@ fn bool path_matches_uri(String file_path, String uri) @private
 	if (ui != 0 && !is_path_separator(uri_path[ui])) return false;
 
 	// The matched suffix must contain at least one separator (filename + directory)
-	for (usz k = fi; k < file_path.len; k++)
+	for (sz k = fi; k < file_path.len; k++)
 	{
 		if (is_path_separator(file_path[k])) return true;
 	}
@@ -299,7 +299,7 @@ fn String percent_decode(String s) @private
 	if (!has_pct) return s;
 
 	DString out = dstring::temp();
-	usz i = 0;
+	sz i = 0;
 	while (i < s.len)
 	{
 		if (s[i] == '%' && i + 2 < s.len)

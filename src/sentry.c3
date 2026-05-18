@@ -25,7 +25,7 @@ fn SentryConfig parse_sentry_dsn(String dsn)
 	String rest = dsn[8..]; // after "https://"
 
 	// Find @ separator
-	usz at_idx;
+	sz at_idx;
 	if (try idx = rest.index_of_char('@'))
 	{
 		at_idx = idx;
@@ -41,7 +41,7 @@ fn SentryConfig parse_sentry_dsn(String dsn)
 	rest = rest[at_idx + 1..]; // after @
 
 	// Find / separator between host and project_id
-	usz slash_idx;
+	sz slash_idx;
 	if (try idx = rest.index_of_char('/'))
 	{
 		slash_idx = idx;

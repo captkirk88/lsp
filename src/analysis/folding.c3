@@ -4,7 +4,7 @@ import std::core::dstring;
 import std::core::mem;
 import c3::lexer;
 
-const usz MAX_BRACE_DEPTH = 256;
+const sz MAX_BRACE_DEPTH = 256;
 
 fn void encode_folding_ranges(String content, DString* out)
 {
@@ -16,20 +16,20 @@ fn void encode_folding_ranges(String content, DString* out)
 	lex.init(content);
 
 	// Brace stack for tracking { } folding
-	usz[MAX_BRACE_DEPTH] brace_lines;
-	usz brace_depth = 0;
+	sz[MAX_BRACE_DEPTH] brace_lines;
+	sz brace_depth = 0;
 
 	// Import tracking for consecutive imports
-	usz import_start_line = 0;
-	usz import_count = 0;
-	usz last_import_line = 0;
+	sz import_start_line = 0;
+	sz import_count = 0;
+	sz last_import_line = 0;
 
 	bool first = true;
 	while (true)
 	{
 		if (try tok = lex.next())
 		{
-			usz line = lo.find_line(tok.offset);
+			sz line = lo.find_line(tok.offset);
 			switch (tok.type)
 			{
 				case LBRACE:
@@ -42,7 +42,7 @@ fn void encode_folding_ranges(String content, DString* out)
 					if (brace_depth > 0)
 					{
 						brace_depth--;
-						usz start_line = brace_lines[brace_depth];
+						sz start_line = brace_lines[brace_depth];
 						if (start_line != line)
 						{
 							if (!first) out.append_char(',');
@@ -54,8 +54,8 @@ fn void encode_folding_ranges(String content, DString* out)
 				case BLOCK_COMMENT:
 				case CONTRACT:
 					// Multi-line comment/contract folding
-					usz end_offset = tok.offset + tok.len;
-					usz end_line = lo.find_line(end_offset > 0 ? end_offset - 1 : 0);
+					sz end_offset = tok.offset + tok.len;
+					sz end_line = lo.find_line(end_offset > 0 ? end_offset - 1 : 0);
 					if (line != end_line)
 					{
 						if (!first) out.append_char(',');

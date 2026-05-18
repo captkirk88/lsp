@@ -36,7 +36,7 @@ fn void DocumentList.open(&self, String uri, String content, int version)
 
 fn void DocumentList.update(&self, String uri, String content, int version)
 {
-	for (usz i = 0; i < self.size; i++)
+	for (sz i = 0; i < self.size; i++)
 	{
 		if (self.entries[i].uri == uri)
 		{
@@ -56,7 +56,7 @@ fn void DocumentList.update(&self, String uri, String content, int version)
 
 fn void DocumentList.close(&self, String uri)
 {
-	for (usz i = 0; i < self.size; i++)
+	for (sz i = 0; i < self.size; i++)
 	{
 		if (self.entries[i].uri == uri)
 		{
@@ -77,7 +77,7 @@ fn void DocumentList.close(&self, String uri)
 
 fn Document* DocumentList.find(&self, String uri)
 {
-	for (usz i = 0; i < self.size; i++)
+	for (sz i = 0; i < self.size; i++)
 	{
 		if (self.entries[i].uri == uri)
 		{

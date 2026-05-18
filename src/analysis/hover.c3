@@ -6,7 +6,7 @@ import std::io::file;
 import std::io::path;
 import c3::lexer;
 
-fn void encode_hover(String uri, String content, usz offset, DocumentList* docs, String stdlib_path, DString* out)
+fn void encode_hover(String uri, String content, sz offset, DocumentList* docs, String stdlib_path, DString* out)
 {
 	LineOffsets lo;
 	lo.init(mem);
@@ -20,7 +20,7 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 	{
 		if (try tok = lex.next())
 		{
-			usz tok_end = tok.offset + tok.len;
+			sz tok_end = tok.offset + tok.len;
 			if (tok.offset <= offset && offset < tok_end)
 			{
 				// For identifiers, try to find the declaration and extract doc comments
@@ -32,7 +32,7 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 					// Tokenize to get cursor index for DOT detection
 					TokenStream hover_stream = token_stream_tokenize(content);
 					Token hover_tok;
-					usz hover_idx;
+					sz hover_idx;
 					bool have_idx = hover_stream.tokens.find_token_at(offset, &hover_tok, &hover_idx);
 
 					// Check if this is a DOT-preceded token (field/method access)
@@ -98,10 +98,10 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 
 					if (doc.str_view().len > 0)
 					{
-						usz line = lo.find_line(tok.offset);
-						usz start_char = tok.offset - lo.entries[line];
-						usz end_line = lo.find_line(tok_end > 0 ? tok_end - 1 : 0);
-						usz end_char = tok_end - lo.entries[end_line];
+						sz line = lo.find_line(tok.offset);
+						sz start_char = tok.offset - lo.entries[line];
+						sz end_line = lo.find_line(tok_end > 0 ? tok_end - 1 : 0);
+						sz end_char = tok_end - lo.entries[end_line];
 
 						Range range = {
 							.start = {.line = line, .character = start_char},
@@ -116,10 +116,10 @@ fn void encode_hover(String uri, String content, usz offset, DocumentList* docs,
 				String desc = get_token_description(tok.type, tok.text);
 				if (desc.len == 0) return;
 
-				usz line = lo.find_line(tok.offset);
-				usz start_char = tok.offset - lo.entries[line];
-				usz end_line = lo.find_line(tok_end > 0 ? tok_end - 1 : 0);
-				usz end_char = tok_end - lo.entries[end_line];
+				sz line = lo.find_line(tok.offset);
+				sz start_char = tok.offset - lo.entries[line];
+				sz end_line = lo.find_line(tok_end > 0 ? tok_end - 1 : 0);
+				sz end_char = tok_end - lo.entries[end_line];
 
 				Range range = {
 					.start = {.line = line, .character = start_char},
@@ -147,7 +147,7 @@ fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentLi
 	if (method_type.len > 0)
 	{
 		if (try_extract_docs_from(content, cursor_tok, out, method_type)) return;
-		for (usz d = 0; d < docs.size; d++)
+		for (sz d = 0; d < docs.size; d++)
 		{
 			if (docs.entries[d].uri == uri) continue;
 			if (try_extract_docs_from(docs.entries[d].content, cursor_tok, out, method_type)) return;
@@ -168,7 +168,7 @@ fn void find_hover_docs(String uri, String content, Token cursor_tok, DocumentLi
 	if (try_extract_docs_from(content, cursor_tok, out)) return;
 
 	// 2. Open documents
-	for (usz d = 0; d < docs.size; d++)
+	for (sz d = 0; d < docs.size; d++)
 	{
 		if (docs.entries[d].uri == uri) continue;
 		if (try_extract_docs_from(docs.entries[d].content, cursor_tok, out)) return;
@@ -196,7 +196,7 @@ fn void find_hover_field_docs(String uri, String content, String type_name, Stri
 	if (try_extract_field_docs_from(content, type_name, field_name, out)) return;
 
 	// 2. Open documents
-	for (usz d = 0; d < docs.size; d++)
+	for (sz d = 0; d < docs.size; d++)
 	{
 		if (docs.entries[d].uri == uri) continue;
 		if (try_extract_field_docs_from(docs.entries[d].content, type_name, field_name, out)) return;
@@ -245,14 +245,14 @@ fn bool try_extract_docs_from(String content, Token target, DString* out, String
 }
 
 // Extract doc comment and signature from the declaration site.
-fn void TokenList.extract_docs_at(&self, String content, usz decl_idx, DString* out)
+fn void TokenList.extract_docs_at(&self, String content, sz decl_idx, DString* out)
 {
 	// Find the start of the declaration (fn, struct, macro, constdef, etc.)
-	usz decl_start_idx = decl_idx;
+	sz decl_start_idx = decl_idx;
 	if (decl_idx > 0)
 	{
 		// Walk back to find the keyword that starts this declaration
-		for (usz i = decl_idx; i > 0; i--)
+		for (sz i = decl_idx; i > 0; i--)
 		{
 			TokenType t = self.entries[i - 1].type;
 			if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM || t == BITSTRUCT || t == INTERFACE || t == FAULTDEF || t == CONSTDEF || t == TYPEDEF || t == ALIAS || t == ATTRDEF)
@@ -266,10 +266,10 @@ fn void TokenList.extract_docs_at(&self, String content, usz decl_idx, DString* 
 	}
 
 	// Extract the signature line from source
-	usz sig_start = self.entries[decl_start_idx].offset;
+	sz sig_start = self.entries[decl_start_idx].offset;
 	// Find the end: up to '{' or ';' or end of token stream
-	usz sig_end = sig_start;
-	for (usz i = decl_start_idx; i < self.size; i++)
+	sz sig_end = sig_start;
+	for (sz i = decl_start_idx; i < self.size; i++)
 	{
 		if (self.entries[i].type == LBRACE || self.entries[i].type == EOS)
 		{
@@ -290,8 +290,8 @@ fn void TokenList.extract_docs_at(&self, String content, usz decl_idx, DString* 
 	if (decl_start_idx > 0)
 	{
 		// Collect comment tokens immediately before the declaration
-		usz first_comment = decl_start_idx;
-		for (usz i = decl_start_idx; i > 0; i--)
+		sz first_comment = decl_start_idx;
+		for (sz i = decl_start_idx; i > 0; i--)
 		{
 			TokenType t = self.entries[i - 1].type;
 			if (t == LINE_COMMENT || t == BLOCK_COMMENT || t == CONTRACT)
@@ -304,7 +304,7 @@ fn void TokenList.extract_docs_at(&self, String content, usz decl_idx, DString* 
 			}
 		}
 
-		for (usz i = first_comment; i < decl_start_idx; i++)
+		for (sz i = first_comment; i < decl_start_idx; i++)
 		{
 			if (self.entries[i].type == LINE_COMMENT || self.entries[i].type == BLOCK_COMMENT || self.entries[i].type == CONTRACT)
 			{
@@ -395,7 +395,7 @@ fn bool scan_project_docs(String file_path, Token target, DString* out, String m
 	pdirs.get_search_dirs(file_path);
 	if (pdirs.project_root.len == 0) return false;
 
-	for (usz i = 0; i < pdirs.count; i++)
+	for (sz i = 0; i < pdirs.count; i++)
 	{
 		DString search_path = dstring::temp();
 		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
@@ -409,7 +409,7 @@ fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth, St
 	if (depth > MAX_SCAN_DEPTH) return false;
 
 	Path p;
-	if (try pp = path::temp(dir_path))
+	if (try pp = path::tnew(dir_path))
 	{
 		p = pp;
 	}
@@ -428,13 +428,13 @@ fn bool scan_dir_docs(String dir_path, Token target, DString* out, int depth, St
 	}
 	defer
 	{
-		foreach (&e : entries) e.free();
+		foreach (&e : entries) e.free(mem);
 		entries.free();
 	}
 
 	foreach (entry : entries)
 	{
-		String entry_name = entry.str_view();
+		String entry_name = (String)entry;
 		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
 		defer mem::free(path_buf);
 		path_buf[:dir_path.len] = dir_path[:dir_path.len];
@@ -465,7 +465,7 @@ fn bool scan_project_field_docs(String file_path, String type_name, String field
 	pdirs.get_search_dirs(file_path);
 	if (pdirs.project_root.len == 0) return false;
 
-	for (usz i = 0; i < pdirs.count; i++)
+	for (sz i = 0; i < pdirs.count; i++)
 	{
 		DString search_path = dstring::temp();
 		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
@@ -479,20 +479,20 @@ fn bool scan_dir_field_docs(String dir_path, String type_name, String field_name
 	if (depth > MAX_SCAN_DEPTH) return false;
 
 	Path p;
-	if (try pp = path::temp(dir_path)) { p = pp; } else { return false; }
+	if (try pp = path::tnew(dir_path)) { p = pp; } else { return false; }
 	PathList entries;
 
 
 	if (try el = path::ls(mem, p)) { entries = el; } else { return false; }
 	defer
 	{
-		foreach (&e : entries) e.free();
+		foreach (&e : entries) e.free(mem);
 		entries.free();
 	}
 
 	foreach (entry : entries)
 	{
-		String entry_name = entry.str_view();
+		String entry_name = (String)entry;
 		char[] path_buf = mem::new_array(char, dir_path.len + 1 + entry_name.len);
 		defer mem::free(path_buf);
 		path_buf[:dir_path.len] = dir_path[:dir_path.len];

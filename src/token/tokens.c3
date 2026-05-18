@@ -215,8 +215,8 @@ fn String get_token_description(TokenType t, String text)
 		case FLOAT128: return "`float128` — 128-bit floating point";
 		case IPTR: return "`iptr` — Signed pointer-sized integer";
 		case UPTR: return "`uptr` — Unsigned pointer-sized integer";
-		case ISZ: return "`isz` — Signed size type";
-		case USZ: return "`sz` — Unsigned size type";
+		case ISZ: return "`sz` — Signed size type";
+		case USZ: return "`usz` — Unsigned size type";
 		case FAULT: return "`fault` — Fault type for error handling";
 		case ANY: return "`any` — Type-erased interface type";
 		case TYPEID: return "`typeid` — Runtime type identifier";

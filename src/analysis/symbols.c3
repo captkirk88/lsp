@@ -41,27 +41,37 @@ fn void encode_document_symbols(String content, DString* out)
 		switch (tok.type)
 		{
 			case MODULE:
-				// module IDENT
+				// module IDENT (SCOPE IDENT)*  — capture the full scoped path
 				if (i + 1 < stream.tokens.size && stream.tokens.entries[i + 1].type == IDENT)
 				{
-					Token nt = stream.tokens.entries[i + 1];
-					name = nt.text;
-					name_offset = nt.offset;
-					name_len = nt.len;
-					kind = 2; // Module
-					end_offset = stream.tokens.find_eos_end(i + 2);
+					Token first = stream.tokens.entries[i + 1];
+					sz path_end = stream.tokens.scope_path_end(i + 1);
+					push_module_symbol(entries[..], &entry_count, lo, content,
+						first.offset, path_end - first.offset, tok.offset,
+						stream.tokens.find_eos_end(i + 2));
 				}
+				continue;
 			case IMPORT:
-				// import IDENT
-				if (i + 1 < stream.tokens.size && stream.tokens.entries[i + 1].type == IDENT)
+				// import IDENT (SCOPE IDENT)* (COMMA IDENT (SCOPE IDENT)*)*
+				// Full scoped paths, plus one symbol per comma-separated module.
+				sz eos_end = stream.tokens.find_eos_end(i + 1);
+				sz j = i + 1;
+				while (j < stream.tokens.size && stream.tokens.entries[j].type == IDENT)
 				{
-					Token nt = stream.tokens.entries[i + 1];
-					name = nt.text;
-					name_offset = nt.offset;
-					name_len = nt.len;
-					kind = 2; // Module
-					end_offset = stream.tokens.find_eos_end(i + 2);
+					Token first = stream.tokens.entries[j];
+					sz path_end = stream.tokens.scope_path_end(j);
+					push_module_symbol(entries[..], &entry_count, lo, content,
+						first.offset, path_end - first.offset, tok.offset, eos_end);
+					// advance past this path
+					sz k = j + 1;
+					while (k + 1 < stream.tokens.size
+						&& stream.tokens.entries[k].type == SCOPE
+						&& stream.tokens.entries[k + 1].type == IDENT) k += 2;
+					// skip a separating comma, else stop
+					if (k < stream.tokens.size && stream.tokens.entries[k].type == COMMA) { j = k + 1; }
+					else { break; }
 				}
+				continue;
 			case FUNC:
 				// fn ... IDENT LPAREN — the IDENT before LPAREN is the name
 				// If preceded by TYPE_IDENT DOT, it's a method
@@ -274,6 +284,54 @@ fn void encode_document_symbols(String content, DString* out)
 		entries[i].sym.encode(out);
 		first = false;
 	}
+}
+
+// Emit a Module (kind 2) symbol whose name is the full scoped path
+// content[name_offset:name_len]. Mirrors the inline entry-build for other kinds.
+fn void push_module_symbol(SymbolEntry[] entries, sz* count, LineOffsets* lo, String content,
+                           sz name_offset, sz name_len, sz decl_offset, sz end_offset)
+{
+	if (*count >= MAX_SYMBOLS) return;
+	if (end_offset == 0) end_offset = name_offset + name_len;
+
+	sz decl_line = lo.find_line(decl_offset);
+	sz decl_char = decl_offset - lo.entries[decl_line];
+	sz end_line  = lo.find_line(end_offset > 0 ? end_offset - 1 : 0);
+	sz end_char  = (end_offset > 0 ? end_offset : 1) - lo.entries[end_line];
+	sz sel_line  = lo.find_line(name_offset);
+	sz sel_char  = name_offset - lo.entries[sel_line];
+
+	entries[*count] = {
+		.sym = {
+			.name = content[name_offset : name_len],
+			.kind = 2, // Module
+			.range = {
+				.start = {.line = decl_line, .character = decl_char},
+				.end   = {.line = end_line,  .character = end_char},
+			},
+			.selection_range = {
+				.start = {.line = sel_line, .character = sel_char},
+				.end   = {.line = sel_line, .character = sel_char + name_len},
+			},
+		},
+	};
+	(*count)++;
+}
+
+// Given the index of the first IDENT of a module path, walk (IDENT (SCOPE IDENT)*)
+// and return the end offset (offset+len) of the LAST IDENT in the path.
+fn sz TokenList.scope_path_end(&self, sz first_ident_idx)
+{
+	sz last = first_ident_idx;
+	sz j = first_ident_idx + 1;
+	while (j + 1 < self.size
+		&& self.entries[j].type == SCOPE
+		&& self.entries[j + 1].type == IDENT)
+	{
+		last = j + 1;
+		j += 2;
+	}
+	return self.entries[last].offset + self.entries[last].len;
 }
 
 fn sz TokenList.find_eos_end(&self, sz start)

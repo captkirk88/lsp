@@ -56,6 +56,38 @@ fn void test_symbols_import() @test {
 	assert(result.contains(`"kind":2`), "got: %s", result); // Module
 }
 
+fn void test_symbols_import_scoped() @test {
+	DString out = dstring::temp();
+	encode_document_symbols("import std::io;", &out);
+	String result = out.str_view();
+	assert(result.contains(`"name":"std::io"`), "got: %s", result);
+	assert(result.contains(`"kind":2`), "got: %s", result); // Module
+}
+
+fn void test_symbols_import_deep_scoped() @test {
+	DString out = dstring::temp();
+	encode_document_symbols("import std::collections::list;", &out);
+	String result = out.str_view();
+	assert(result.contains(`"name":"std::collections::list"`), "got: %s", result);
+}
+
+fn void test_symbols_import_comma_list() @test {
+	DString out = dstring::temp();
+	encode_document_symbols("import std::io, std::core::ascii;", &out);
+	String result = out.str_view();
+	// Both modules should appear as separate symbols.
+	assert(result.contains(`"name":"std::io"`), "got: %s", result);
+	assert(result.contains(`"name":"std::core::ascii"`), "got: %s", result);
+}
+
+fn void test_symbols_module_scoped() @test {
+	DString out = dstring::temp();
+	encode_document_symbols("module foo::bar;", &out);
+	String result = out.str_view();
+	assert(result.contains(`"name":"foo::bar"`), "got: %s", result);
+	assert(result.contains(`"kind":2`), "got: %s", result); // Module
+}
+
 fn void test_symbols_constdef() @test {
 	DString out = dstring::temp();
 	encode_document_symbols("constdef MAX_SIZE = 100;", &out);

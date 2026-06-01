@@ -490,7 +490,7 @@ fn void test_completion_edit_range_ct_prefix() @test {
 	encode_completions("", "$str", 4, docs, "", &out);
 	String result = out.str_view();
 	assert(result.contains(`"label":"$stringify"`), "got: %s", result);
-	assert(result.contains(`"itemDefaults":{"editRange":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}`), "got: %s", result);
+	assert(result.contains(`"itemDefaults":{"editRange":{"insert":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"replace":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}}`), "got: %s", result);
 }
 
 fn void test_completion_edit_range_later_line() @test {
@@ -500,7 +500,7 @@ fn void test_completion_edit_range_later_line() @test {
 	String content = "fn x() {}\n$str";
 	encode_completions("", content, content.len, docs, "", &out);
 	String result = out.str_view();
-	assert(result.contains(`"itemDefaults":{"editRange":{"start":{"line":1,"character":0},"end":{"line":1,"character":4}}}`), "got: %s", result);
+	assert(result.contains(`"itemDefaults":{"editRange":{"insert":{"start":{"line":1,"character":0},"end":{"line":1,"character":4}},"replace":{"start":{"line":1,"character":0},"end":{"line":1,"character":4}}}}`), "got: %s", result);
 }
 
 fn void test_completion_edit_range_dot_partial() @test {
@@ -511,7 +511,7 @@ fn void test_completion_edit_range_dot_partial() @test {
 	String content = "struct Foo { int x; }\nFoo f; f.ge";
 	encode_completions("", content, content.len, docs, "", &out);
 	String result = out.str_view();
-	assert(result.contains(`"itemDefaults":{"editRange":{"start":{"line":1,"character":9},"end":{"line":1,"character":11}}}`), "got: %s", result);
+	assert(result.contains(`"itemDefaults":{"editRange":{"insert":{"start":{"line":1,"character":9},"end":{"line":1,"character":11}},"replace":{"start":{"line":1,"character":9},"end":{"line":1,"character":11}}}}`), "got: %s", result);
 }
 
 // --- enum-member completion tests ---

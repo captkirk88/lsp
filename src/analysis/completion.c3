@@ -191,9 +191,16 @@ fn void encode_completions(String uri, String content, sz offset, DocumentList* 
 		.end   = { .line = cur_line, .character = offset - line_start },
 	};
 
-	out.append(`{"isIncomplete":false,"itemDefaults":{"editRange":`);
+	// Emit editRange as an explicit InsertReplaceEdit ({insert, replace}) rather than a
+	// bare Range. Both ranges are identical (prefix_start..cursor), but the insert/replace
+	// form gives VS Code unambiguous edit semantics so completions still show when a
+	// closing bracket sits right after the cursor (editor.autoClosingBrackets inserts one,
+	// e.g. "foo(|)"). With a bare Range VS Code suppresses the popup in that position.
+	out.append(`{"isIncomplete":false,"itemDefaults":{"editRange":{"insert":`);
 	edit_range.encode(out);
-	out.append(`},"items":[`);
+	out.append(`,"replace":`);
+	edit_range.encode(out);
+	out.append(`}},"items":[`);
 	bool first = true;
 
 	if (is_dot_context)

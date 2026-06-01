@@ -238,12 +238,13 @@ fn String TokenStream.resolve_type_alias(&self, String type_name)
 {
 	for (sz i = 0; i + 3 < self.tokens.size; i++)
 	{
-		Token kw = self.tokens.get(i);
+		Token kw   = self.tokens.get(i);
 		Token name = self.tokens.get(i + 1);
-		Token eq = self.tokens.get(i + 2);
+		Token eq   = self.tokens.get(i + 2);
 		Token base = self.tokens.get(i + 3);
 
-		if (kw.type == ALIAS && name.type == TYPE_IDENT && name.text == type_name && eq.type == EQ && base.type == TYPE_IDENT)
+		if (kw.type == ALIAS && name.type == TYPE_IDENT && name.text == type_name && eq.type == EQ
+			&& base.type == TYPE_IDENT)
 		{
 			return base.text;
 		}
@@ -256,7 +257,7 @@ fn String TokenStream.resolve_method_type(&self, sz cursor_idx)
 {
 	if (cursor_idx < 2) return "";
 
-	Token dot = self.tokens.get(cursor_idx - 1);
+	Token dot      = self.tokens.get(cursor_idx - 1);
 	Token receiver = self.tokens.get(cursor_idx - 2);
 
 	if (dot.type != DOT || !is_ident(receiver.type)) return "";
@@ -280,7 +281,7 @@ fn sz[2]? TokenStream.find_function_scope(&self, sz offset)
 		if (tt != FUNC && tt != MACRO) continue;
 
 		// Find the opening brace of this function
-		sz brace_idx = 0;
+		sz brace_idx   = 0;
 		sz paren_start = 0;
 		for (sz j = i + 1; j < self.tokens.size; j++)
 		{
@@ -303,7 +304,7 @@ fn sz[2]? TokenStream.find_function_scope(&self, sz offset)
 		if (try c = close)
 		{
 			sz brace_start = self.tokens.get(brace_idx).offset;
-			sz brace_end = c.offset + c.len;
+			sz brace_end   = c.offset + c.len;
 
 			// Check if offset is in function body
 			if (offset >= brace_start && offset < brace_end)
@@ -356,7 +357,12 @@ fn sz[2]? TokenStream.declaration_signature_range(&self, sz decl_idx)
 	for (sz i = decl_idx; i > 0; i--)
 	{
 		TokenType t = self.tokens.get(i - 1).type;
-		if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM || t == BITSTRUCT || t == INTERFACE || t == FAULTDEF || t == CONSTDEF || t == TYPEDEF || t == ALIAS || t == ATTRDEF)
+		if (t == FUNC || t == MACRO || t == STRUCT || t == UNION || t == ENUM || t == BITSTRUCT || t == INTERFACE
+			|| t == FAULTDEF
+			|| t == CONSTDEF
+			|| t == TYPEDEF
+			|| t == ALIAS
+			|| t == ATTRDEF)
 		{
 			keyword_idx = i - 1;
 			break;
@@ -365,7 +371,7 @@ fn sz[2]? TokenStream.declaration_signature_range(&self, sz decl_idx)
 	}
 
 	sz start = self.tokens.get(keyword_idx).offset;
-	sz end = start;
+	sz end   = start;
 
 	// Find end: up to '{' or ';' or end of stream
 	for (sz i = keyword_idx; i < self.tokens.size; i++)

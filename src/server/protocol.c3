@@ -1,9 +1,15 @@
 module lsp;
 
 import std::core::dstring;
+import std::core::mem;
+import std::collections::list;
 import std::encoding::json;
 import std::collections::object;
 import std::time;
+
+// Set of file:// URIs that currently have published c3c compiler diagnostics.
+// Used to clear (publish an empty array for) files that no longer have errors.
+alias PublishedFiles = List{String};
 
 struct LspServer
 {
@@ -16,12 +22,16 @@ struct LspServer
 	long diag_delay_ms;
 	Time last_diag_time;
 	SentryConfig sentry;
+	PublishedFiles diag_files;
+	bool diag_pending;
+	String diag_pending_uri;
 }
 
 fn void LspServer.init(&self, String stdlib_path, String compiler_path, long diag_delay_ms, String sentry_dsn)
 {
 	*self = { .running = true, .stdlib_path = stdlib_path, .compiler_path = compiler_path, .diag_delay_ms = diag_delay_ms, .sentry = parse_sentry_dsn(sentry_dsn), };
 	self.documents.init(mem);
+	self.diag_files.init(mem);
 }
 
 fn void LspServer.handle_message(&self, String message)
@@ -137,4 +147,24 @@ fn void LspServer.handle_message(&self, String message)
 	{
 		send_error(id_json, -32601, "Method not found");
 	}
+
+	// Flush any compiler diagnostics that were throttled. The server blocks on
+	// stdin, so we piggyback on incoming messages (e.g. didChange keystrokes) to
+	// run a pending build once the throttle window has elapsed.
+	self.flush_pending_diagnostics();
+}
+
+// Run a throttled-and-deferred compiler diagnostics request if its delay window
+// has now elapsed. Called after every dispatched message.
+fn void LspServer.flush_pending_diagnostics(&self)
+{
+	if (!self.diag_pending) return;
+
+	Time now = time::now();
+	Duration elapsed = now - self.last_diag_time;
+	Duration delay = time::ms(self.diag_delay_ms);
+	if ((long)elapsed < (long)delay && (long)self.last_diag_time > 0) return;
+
+	self.diag_pending = false;
+	self.publish_compiler_diagnostics(self.diag_pending_uri);
 }

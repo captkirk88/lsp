@@ -2,12 +2,26 @@ module lsp;
 
 import std::core::dstring;
 import std::core::mem;
+import std::collections::list;
 import std::io::file;
 import std::os::process;
 import std::time;
 
 const sz COMPILER_OUTPUT_BUFFER   = 65536;
 const sz MAX_COMPILER_DIAGNOSTICS = 50;
+
+// A single parsed c3c diagnostic. `file` and `message` reference temp/buffer
+// memory valid only for the duration of publish_compiler_diagnostics.
+struct CompilerDiag
+{
+	String file;    // resolved absolute path (separators normalized to '/')
+	int line;       // 0-indexed
+	int col;        // 0-indexed
+	int severity;   // LSP DiagnosticSeverity (1=error, 2=warning, 3=info)
+	String message; // raw message text (slice into compiler output)
+}
+
+alias CompilerDiagList = List{CompilerDiag};
 
 // Run c3c build -C --lsp from the project root and publish diagnostics.
 // Falls back to compile-only for standalone files with no project.json.
@@ -85,15 +99,29 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 
 	String output = (String)buf[:total_read];
 
-	// Collect diagnostics per file, but only publish for the triggering URI.
-	// Also clear diagnostics when there are no errors for this file.
-	DString diags = dstring::temp();
-	diags.append_char('[');
-	int diag_count = 0;
+	// A project build reports diagnostics across all files, so parse every
+	// LSPERR line and publish per file (and clear files that no longer have
+	// errors) rather than only the triggering URI. This is what keeps stale
+	// errors from sticking in the editor when they are fixed.
+	CompilerDiagList diags;
+	diags.tinit();
+	parse_compiler_diagnostics(&diags, output, project_root);
 
-	// Parse LSPERR lines: LSPERR|severity|"file"|line|col|"message"
+	self.publish_grouped_diagnostics(&diags);
+
+	// Update last diagnostics time
+	self.last_diag_time = time::now();
+}
+
+// Parse all LSPERR lines from c3c output into a flat diagnostics list.
+// Format per line (optionally prefixed with "> "):
+//   LSPERR|severity|"file"|line|col|"message"
+// File paths are resolved to file:// URIs; relative paths are joined to
+// project_root. Capped at MAX_COMPILER_DIAGNOSTICS total.
+fn void parse_compiler_diagnostics(CompilerDiagList* out, String output, String project_root)
+{
 	sz pos = 0;
-	while (pos < output.len && diag_count < MAX_COMPILER_DIAGNOSTICS)
+	while (pos < output.len && out.len() < MAX_COMPILER_DIAGNOSTICS)
 	{
 		// Find next line
 		sz line_end = pos;
@@ -115,13 +143,13 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 		// Parse: LSPERR|severity|"file"|line|col|"message"
 		String rest = line[7..]; // after "LSPERR|"
 
-		// Extract severity
 		String severity_str;
 		String file_str;
 		String line_str;
 		String col_str;
 		String msg_str;
 
+		// Extract severity
 		if (try sep1 = rest.index_of_char('|'))
 		{
 			severity_str = rest[:sep1];
@@ -153,9 +181,6 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 		{
 			continue;
 		}
-
-		// Only collect diagnostics for the file that triggered the build
-		if (!path_matches_uri(file_str, uri)) continue;
 
 		// Extract line number
 		if (try sep = rest.index_of_char('|'))
@@ -206,36 +231,137 @@ fn void LspServer.publish_compiler_diagnostics(&self, String uri)
 			sev = 3;
 		}
 
-		if (diag_count > 0) diags.append_char(',');
-		diags.append(`{"range":{"start":{"line":`);
-		diags.appendf("%d", diag_line);
-		diags.append(`,"character":`);
-		diags.appendf("%d", diag_col);
-		diags.append(`},"end":{"line":`);
-		diags.appendf("%d", diag_line);
-		diags.append(`,"character":`);
-		diags.appendf("%d", diag_col + 1);
-		diags.append(`}},"severity":`);
-		diags.appendf("%d", sev);
-		diags.append(`,"source":"c3c","message":"`);
-		json_escape_into(&diags, msg_str);
-		diags.append(`"}`);
-		diag_count++;
+		out.push({ .file = resolve_compiler_path(file_str, project_root), .line = diag_line, .col = diag_col, .severity = sev, .message = msg_str });
+	}
+}
+
+// Publish one textDocument/publishDiagnostics per file with errors, then clear
+// (publish an empty array for) any file that had diagnostics on the previous
+// run but no longer does. self.diag_files tracks the current set of error files.
+fn void LspServer.publish_grouped_diagnostics(&self, CompilerDiagList* diags)
+{
+	// Distinct URIs that have errors this run.
+	List{String} current;
+	current.tinit();
+
+	foreach (d : *diags)
+	{
+		// Publish under the open document's own URI when the file is open, so the
+		// editor matches the diagnostics to the buffer and shows inline markers
+		// (the document URI may differ from the compiler path via symlinks).
+		String uri = self.document_uri_for_path(d.file);
+		if (current.contains(uri)) continue;
+		current.push(uri);
+
+		DString arr = dstring::temp();
+		arr.append_char('[');
+		int n = 0;
+		foreach (d2 : *diags)
+		{
+			if (d2.file != d.file) continue;
+			if (n > 0) arr.append_char(',');
+			append_compiler_diag_json(&arr, d2);
+			n++;
+		}
+		arr.append_char(']');
+		publish_file_diagnostics(uri, arr.str_view());
 	}
 
-	diags.append_char(']');
+	// Clear files that previously had diagnostics but no longer do.
+	foreach (old_uri : self.diag_files)
+	{
+		if (!current.contains(old_uri))
+		{
+			publish_file_diagnostics(old_uri, "[]");
+		}
+	}
 
+	// Rebuild the persistent set with owned copies of the current error URIs.
+	foreach (old_uri : self.diag_files)
+	{
+		if (old_uri.len > 0) mem::free((char*)old_uri.ptr);
+	}
+	self.diag_files.clear();
+	foreach (u : current)
+	{
+		char[] copy = mem::new_array(char, u.len);
+		copy[..] = u[..];
+		self.diag_files.push((String)copy);
+	}
+}
+
+// Append a single diagnostic object (LSP Diagnostic) as JSON.
+fn void append_compiler_diag_json(DString* out, CompilerDiag d) @private
+{
+	out.append(`{"range":{"start":{"line":`);
+	out.appendf("%d", d.line);
+	out.append(`,"character":`);
+	out.appendf("%d", d.col);
+	out.append(`},"end":{"line":`);
+	out.appendf("%d", d.line);
+	out.append(`,"character":`);
+	out.appendf("%d", d.col + 1);
+	out.append(`}},"severity":`);
+	out.appendf("%d", d.severity);
+	out.append(`,"source":"c3c","message":"`);
+	json_escape_into(out, d.message);
+	out.append(`"}`);
+}
+
+// Send a publishDiagnostics notification for a single file URI.
+fn void publish_file_diagnostics(String uri, String diags_array) @private
+{
 	DString params = dstring::temp();
 	params.append(`{"uri":"`);
 	json_escape_into(&params, uri);
 	params.append(`","diagnostics":`);
-	params.append(diags.str_view());
+	params.append(diags_array);
 	params.append_char('}');
-
 	send_notification("textDocument/publishDiagnostics", params.str_view());
+}
 
-	// Update last diagnostics time
-	self.last_diag_time = time::now();
+// Resolve a file path from c3c output to an absolute path with separators
+// normalized to '/'. Relative paths are joined to project_root.
+fn String resolve_compiler_path(String file_str, String project_root) @private
+{
+	DString abs = dstring::temp();
+	if (file_str.len > 0 && (is_path_separator(file_str[0]) || is_windows_drive_path(file_str)))
+	{
+		abs.append(file_str);
+	}
+	else if (project_root.len > 0)
+	{
+		abs.append(project_root);
+		abs.append_char('/');
+		abs.append(file_str);
+	}
+	else
+	{
+		abs.append(file_str);
+	}
+
+	DString norm = dstring::temp();
+	foreach (c : abs.str_view())
+	{
+		norm.append_char(is_path_separator(c) ? '/' : c);
+	}
+	return norm.str_view();
+}
+
+// Pick the URI to publish diagnostics under for a resolved file path. If the
+// file is currently open, return that document's exact URI (so the editor
+// associates the diagnostics with its buffer and renders inline markers, even
+// when the document URI differs from the compiler path via symlinks). Otherwise
+// build a file:// URI from the path.
+fn String LspServer.document_uri_for_path(&self, String file_path)
+{
+	foreach (doc : self.documents)
+	{
+		if (path_matches_uri(file_path, doc.uri)) return doc.uri;
+	}
+	DString u = dstring::temp();
+	append_file_uri(&u, file_path);
+	return u.str_view();
 }
 
 // Check if a filesystem path matches a file:// URI.

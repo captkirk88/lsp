@@ -87,3 +87,66 @@ fn void test_parent_dir_windows_nested() @test {
 fn void test_parent_dir_unix_unchanged() @test {
 	assert(parent_dir("/home/user/project") == "/home/user");
 }
+
+// --- resolve_compiler_path ---
+
+fn void test_compiler_path_absolute_unix() @test {
+	assert(resolve_compiler_path("/home/user/project/src/foo.c3", "/home/user/project") == "/home/user/project/src/foo.c3");
+}
+
+fn void test_compiler_path_relative_joined() @test {
+	assert(resolve_compiler_path("src/foo.c3", "/home/user/project") == "/home/user/project/src/foo.c3");
+}
+
+fn void test_compiler_path_windows_backslash() @test {
+	assert(resolve_compiler_path(`C:\Users\test\foo.c3`, `C:\Users\test`) == "C:/Users/test/foo.c3");
+}
+
+fn void test_compiler_path_relative_no_root() @test {
+	// No project root: use the path as-is (standalone file fallback).
+	assert(resolve_compiler_path("/tmp/foo.c3", "") == "/tmp/foo.c3");
+}
+
+// --- parse_compiler_diagnostics ---
+
+fn void test_parse_single_diagnostic() @test {
+	CompilerDiagList diags;
+	diags.tinit();
+	String out = "> LSPERR|error|\"/proj/src/a.c3\"|3|5|\"undefined symbol\"\n";
+	parse_compiler_diagnostics(&diags, out, "/proj");
+	assert(diags.len() == 1);
+	assert(diags[0].file == "/proj/src/a.c3");
+	assert(diags[0].line == 2); // 0-indexed
+	assert(diags[0].col == 4);
+	assert(diags[0].severity == 1);
+	assert(diags[0].message == "undefined symbol");
+}
+
+fn void test_parse_groups_two_files() @test {
+	// Two errors in two different files should yield two distinct URIs.
+	CompilerDiagList diags;
+	diags.tinit();
+	String out = "LSPERR|error|\"/proj/a.c3\"|1|1|\"err a\"\nLSPERR|warning|\"/proj/b.c3\"|2|2|\"warn b\"\n";
+	parse_compiler_diagnostics(&diags, out, "/proj");
+	assert(diags.len() == 2);
+	assert(diags[0].file == "/proj/a.c3");
+	assert(diags[1].file == "/proj/b.c3");
+	assert(diags[1].severity == 2); // warning
+}
+
+fn void test_parse_relative_path() @test {
+	CompilerDiagList diags;
+	diags.tinit();
+	String out = "LSPERR|error|\"src/x.c3\"|10|1|\"oops\"\n";
+	parse_compiler_diagnostics(&diags, out, "/home/u/proj");
+	assert(diags.len() == 1);
+	assert(diags[0].file == "/home/u/proj/src/x.c3");
+}
+
+fn void test_parse_ignores_non_lsperr() @test {
+	CompilerDiagList diags;
+	diags.tinit();
+	String out = "Compiling...\nsome other output\n";
+	parse_compiler_diagnostics(&diags, out, "/proj");
+	assert(diags.len() == 0);
+}

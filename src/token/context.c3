@@ -23,7 +23,12 @@ struct AnalysisContext
 }
 
 // Initialize context with current document and search configuration
-fn AnalysisContext analysis_context_init(TokenStream* current, DocumentList* open_docs, String file_path, String stdlib_path)
+fn AnalysisContext analysis_context_init(
+	TokenStream* current,
+	DocumentList* open_docs,
+	String file_path,
+	String stdlib_path
+)
 {
 	AnalysisContext ctx;
 	ctx.current = current;
@@ -56,7 +61,7 @@ fn Location? AnalysisContext.find_definition(&self, Token target)
 	// 2. Search open documents
 	for (sz i = 0; i < self.open_docs.size; i++)
 	{
-		Document doc = self.open_docs.entries[i];
+		Document doc       = self.open_docs.entries[i];
 		TokenStream stream = token_stream_tokenize(doc.content);
 		defer stream.free();
 		Token? found = stream.find_declaration_of(target, stream.tokens.size);

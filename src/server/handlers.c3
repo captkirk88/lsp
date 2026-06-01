@@ -38,10 +38,10 @@ fn void LspServer.handle_initialize(&self, Object* msg, String id_json)
 			copy[..] = compiler[..];
 			self.compiler_path = (String)copy;
 		}
-		int delay = opts.get_int("diagnosticsDelay") ?? 0;
-		if (delay > 0 && self.diag_delay_ms == 0)
+		// Client config overrides the CLI/default. 0 means "no throttle".
+		if (try delay = opts.get_int("diagnosticsDelay"))
 		{
-			self.diag_delay_ms = delay;
+			self.diag_delay_ms = (long)delay;
 		}
 		String sentry = opts.get_string("sentryDsn") ?? "";
 		if (sentry.len > 0 && !self.sentry.enabled)
@@ -90,8 +90,8 @@ fn void LspServer.handle_exit(&self)
 
 fn void LspServer.handle_did_open(&self, Object* msg)
 {
-	Object* td = msg.get("params")!!.get("textDocument")!!;
-	String uri = td.get_string("uri") ?? "";
+	Object* td  = msg.get("params")!!.get("textDocument")!!;
+	String uri  = td.get_string("uri") ?? "";
 	String text = td.get_string("text") ?? "";
 	int version = td.get_int("version") ?? 0;
 
@@ -103,13 +103,13 @@ fn void LspServer.handle_did_open(&self, Object* msg)
 fn void LspServer.handle_did_change(&self, Object* msg)
 {
 	Object* params = msg.get("params")!!;
-	Object* td = params.get("textDocument")!!;
-	String uri = td.get_string("uri") ?? "";
-	int version = td.get_int("version") ?? 0;
+	Object* td     = params.get("textDocument")!!;
+	String uri     = td.get_string("uri") ?? "";
+	int version    = td.get_int("version") ?? 0;
 
 	Object* changes = params.get("contentChanges")!!;
-	Object* first = changes.get_at(0);
-	String text = first.get_string("text") ?? "";
+	Object* first   = changes.get_at(0);
+	String text     = first.get_string("text") ?? "";
 
 	self.documents.update(uri, text, version);
 	publish_diagnostics(uri, text);
@@ -131,18 +131,43 @@ fn void LspServer.handle_did_save(&self, Object* msg)
 
 fn void LspServer.maybe_run_compiler_diagnostics(&self, String uri)
 {
-	// Throttle: only run if enough time has passed since last run
-	if (self.diag_delay_ms > 0)
+	// No throttle configured: run immediately.
+	if (self.diag_delay_ms <= 0)
 	{
-		Time now = time::now();
-		Duration elapsed = now - self.last_diag_time;
-		Duration delay = time::ms(self.diag_delay_ms);
-		if ((long)elapsed < (long)delay && (long)self.last_diag_time > 0)
-		{
-			return;
-		}
+		self.diag_pending = false;
+		self.publish_compiler_diagnostics(uri);
+		return;
 	}
-	self.publish_compiler_diagnostics(uri);
+
+	Time now         = time::now();
+	Duration elapsed = now - self.last_diag_time;
+	Duration delay   = time::ms(self.diag_delay_ms);
+	if ((long)elapsed >= (long)delay || (long)self.last_diag_time == 0)
+	{
+		// Enough time has passed (or first run) — run now.
+		self.diag_pending = false;
+		self.publish_compiler_diagnostics(uri);
+		return;
+	}
+
+	// Inside the throttle window — defer with a trailing-edge debounce. Store an
+	// owned copy of the URI so flush_pending_diagnostics can re-run it once the
+	// window elapses (on the next incoming message). This prevents a fix-save
+	// from being silently dropped and leaving stale diagnostics behind.
+	self.set_pending_diag_uri(uri);
+	self.diag_pending = true;
+}
+
+// Store an owned copy of the URI whose diagnostics are pending a deferred run.
+fn void LspServer.set_pending_diag_uri(&self, String uri)
+{
+	if (self.diag_pending_uri.len > 0)
+	{
+		mem::free((char*)self.diag_pending_uri.ptr);
+	}
+	char[] copy = mem::new_array(char, uri.len);
+	copy[..] = uri[..];
+	self.diag_pending_uri = (String)copy;
 }
 
 fn void LspServer.handle_semantic_tokens(&self, Object* msg, String id_json)
@@ -217,8 +242,8 @@ fn void LspServer.handle_hover(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -248,8 +273,8 @@ fn void LspServer.handle_completion(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -276,8 +301,8 @@ fn void LspServer.handle_definition(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -307,8 +332,8 @@ fn void LspServer.handle_signature_help(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -338,8 +363,8 @@ fn void LspServer.handle_document_highlight(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -369,8 +394,8 @@ fn void LspServer.handle_references(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	sz offset = position_to_offset(doc.content, line, character);
@@ -406,8 +431,8 @@ fn void LspServer.handle_rename(&self, Object* msg, String id_json)
 		return;
 	}
 
-	Object* pos = msg.get("params")!!.get("position")!!;
-	int line = pos.get_int("line") ?? 0;
+	Object* pos   = msg.get("params")!!.get("position")!!;
+	int line      = pos.get_int("line") ?? 0;
 	int character = pos.get_int("character") ?? 0;
 
 	String new_name = msg.get("params")!!.get_string("newName") ?? "";

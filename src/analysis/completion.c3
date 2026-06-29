@@ -571,7 +571,7 @@ fn void collect_declarations_from_content(String content, String prefix, DString
 // Resolve a short module name to its full path using imports.
 // e.g. if content has "import std::os::process;" and module_name is "process",
 // returns "std::os::process". Returns "" if no matching import found.
-fn String resolve_module_name(String content, String module_name) @private
+fn String resolve_module_name(String content, String module_name)
 {
 	String[MAX_IMPORTS] imports;
 	sz import_count = parse_imports(content, &imports);
@@ -589,7 +589,7 @@ fn String resolve_module_name(String content, String module_name) @private
 }
 
 // Extract the last segment of a module path: "std::os::process" → "process"
-fn String last_module_segment(String mod_path) @private
+fn String last_module_segment(String mod_path)
 {
 	// Find last "::" and return everything after it
 	sz last_colon = 0;
@@ -611,7 +611,7 @@ fn String last_module_segment(String mod_path) @private
 
 // Does a declared module path match the requested module? Matches on the full path,
 // the bare short name, or the last segment (e.g. "std::os::process" matches "process").
-fn bool module_path_matches(String declared, String short_name, String full_name) @private
+fn bool module_path_matches(String declared, String short_name, String full_name)
 {
 	if (declared == short_name) return true;
 	if (full_name.len > 0 && declared == full_name) return true;

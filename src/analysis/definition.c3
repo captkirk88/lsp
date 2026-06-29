@@ -1130,12 +1130,46 @@ fn bool scan_dir_struct_field(String dir_path, String type_name, String field_na
 	return false;
 }
 
+fn String TokenList.resolve_module_prefix(&self, sz cursor_idx)
+{
+	if (cursor_idx < 2) return "";
+	if (self.entries[cursor_idx - 1].type != SCOPE) return "";
+
+	sz start_idx = cursor_idx - 1;
+	while (start_idx > 0)
+	{
+		TokenType prev_t = self.entries[start_idx - 1].type;
+		if (prev_t == IDENT || prev_t == SCOPE || prev_t == TYPE_IDENT)
+		{
+			start_idx--;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	DString mod_path = dstring::temp();
+	bool first = true;
+	for (sz i = start_idx; i < cursor_idx - 1; i++)
+	{
+		TokenType t = self.entries[i].type;
+		if (t == IDENT || t == TYPE_IDENT)
+		{
+			if (!first) mod_path.append("::");
+			mod_path.append(self.entries[i].text);
+			first = false;
+		}
+	}
+	return mod_path.str_view();
+}
+
 // 4-step definition search: current file -> open docs -> project files -> stdlib.
 // Returns true if a definition was found and emitted.
-fn bool TokenList.try_find_definition(&self, Token cursor_tok, sz cursor_idx, String uri, String content, DocumentList* docs, String stdlib_path, DString* out, String method_type = "")
+fn bool TokenList.try_find_definition(&self, Token cursor_tok, sz cursor_idx, String uri, String content, DocumentList* docs, String stdlib_path, DString* out, String method_type = "", String module_filter = "")
 {
 	// 1. Search current file
-	if (try decl_idx = self.find_declaration(cursor_tok, cursor_idx, method_type))
+	if (try decl_idx = self.find_declaration(cursor_tok, cursor_idx, method_type, module_filter))
 	{
 		if (decl_idx != cursor_idx)
 		{
@@ -1151,7 +1185,7 @@ fn bool TokenList.try_find_definition(&self, Token cursor_tok, sz cursor_idx, St
 
 		TokenStream* other_stream = docs.entries[d].get_tokens();
 
-		if (try found = other_stream.tokens.find_declaration_in(cursor_tok, method_type))
+		if (try found = other_stream.tokens.find_declaration_in(cursor_tok, method_type, module_filter))
 		{
 			emit_location(docs.entries[d].uri, docs.entries[d].content, other_stream.tokens.entries[found], out);
 			return true;
@@ -1162,7 +1196,7 @@ fn bool TokenList.try_find_definition(&self, Token cursor_tok, sz cursor_idx, St
 	String file_path = uri_to_path(uri);
 	if (file_path.len > 0)
 	{
-		if (try found = scan_project_files(file_path, cursor_tok, out, method_type))
+		if (try found = scan_project_files(file_path, cursor_tok, out, method_type, module_filter))
 		{
 			if (found) return true;
 		}
@@ -1171,7 +1205,7 @@ fn bool TokenList.try_find_definition(&self, Token cursor_tok, sz cursor_idx, St
 	// 4. Scan stdlib path
 	if (stdlib_path.len > 0)
 	{
-		if (scan_dir_recursive(stdlib_path, cursor_tok, out, 0, method_type))
+		if (scan_dir_recursive(stdlib_path, cursor_tok, out, 0, method_type, module_filter))
 		{
 			return true;
 		}
@@ -1264,8 +1298,20 @@ fn void encode_definition(String uri, String content, sz offset, DocumentList* d
 		}
 	}
 
+	// Resolve module scope prefix (e.g. mod::func -> resolve prefix "mod")
+	String module_filter = "";
+	String prefix = stream.tokens.resolve_module_prefix(cursor_idx);
+	if (prefix.len > 0)
+	{
+		module_filter = resolve_module_name(content, prefix);
+		if (module_filter.len == 0)
+		{
+			module_filter = prefix;
+		}
+	}
+
 	// Regular search (non-method)
-	stream.tokens.try_find_definition(cursor_tok, cursor_idx, uri, content, docs, stdlib_path, out);
+	stream.tokens.try_find_definition(cursor_tok, cursor_idx, uri, content, docs, stdlib_path, out, module_filter: module_filter);
 }
 
 // Find an enum/faultdef/constdef member named `name`. Handles both the block form
@@ -1314,117 +1360,246 @@ fn sz? TokenList.find_enum_or_constdef_member(&self, String name)
 }
 
 // Search for a declaration in a token stream (not tied to a cursor position).
-fn sz? TokenList.find_declaration_in(&self, Token target, String method_type = "")
+fn sz? TokenList.find_declaration_in(&self, Token target, String method_type = "", String module_filter = "")
 {
-	return self.find_declaration(target, self.size, method_type);
+	return self.find_declaration(target, self.size, method_type, module_filter);
 }
 
 // Searches for the declaration of a token in the token stream.
 // When method_type is non-empty, searches for fn Type.name( pattern only.
-fn sz? TokenList.find_declaration(&self, Token target, sz target_idx, String method_type = "")
+fn sz? TokenList.find_declaration(&self, Token target, sz target_idx, String method_type = "", String module_filter = "")
 {
 	String name = target.text;
 
 	switch (target.type)
 	{
 		case TYPE_IDENT:
-			for (sz i = 0; i + 1 < self.size; i++)
 			{
-				TokenType kw = self.get(i).type;
-				if (is_type_declaration_keyword(kw))
+				String declared_mod = "";
+				for (sz i = 0; i + 1 < self.size; i++)
 				{
-					if (self.entries[i + 1].type == TYPE_IDENT && self.entries[i + 1].text == name)
+					if (self.get(i).type == MODULE)
 					{
-						return i + 1;
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
+						{
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
+						}
+						declared_mod = mod_path.str_view();
+					}
+					TokenType kw = self.get(i).type;
+					if (is_type_declaration_keyword(kw))
+					{
+						if (self.entries[i + 1].type == TYPE_IDENT && self.entries[i + 1].text == name)
+						{
+							if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+							{
+								return i + 1;
+							}
+						}
 					}
 				}
 			}
 		case CONST_IDENT:
-			// constdef NAME
-			for (sz i = 0; i + 1 < self.size; i++)
 			{
-				if (self.get(i).type == CONSTDEF && self.entries[i + 1].type == CONST_IDENT && self.entries[i + 1].text == name)
+				// constdef NAME
+				String declared_mod = "";
+				for (sz i = 0; i + 1 < self.size; i++)
 				{
-					return i + 1;
+					if (self.get(i).type == MODULE)
+					{
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
+						{
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
+						}
+						declared_mod = mod_path.str_view();
+					}
+					if (self.get(i).type == CONSTDEF && self.entries[i + 1].type == CONST_IDENT && self.entries[i + 1].text == name)
+					{
+						if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+						{
+							return i + 1;
+						}
+					}
 				}
+				// const [Type] NAME = ...
+				declared_mod = "";
+				for (sz i = 0; i + 1 < self.size; i++)
+				{
+					if (self.get(i).type == MODULE)
+					{
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
+						{
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
+						}
+						declared_mod = mod_path.str_view();
+					}
+					if (self.get(i).type != CONST) continue;
+					// const NAME = ... (no type)
+					if (self.entries[i + 1].type == CONST_IDENT && self.entries[i + 1].text == name)
+					{
+						if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+						{
+							return i + 1;
+						}
+					}
+					// const Type NAME = ... (with type)
+					if (i + 2 < self.size && is_type_token(self.entries[i + 1].type) && self.entries[i + 2].type == CONST_IDENT && self.entries[i + 2].text == name)
+					{
+						if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+						{
+							return i + 2;
+						}
+					}
+				}
+				// enum / faultdef / constdef member: enum Foo { NAME }, constdef Bar : T { NAME = v }, faultdef NAME
+				if (try found = self.find_enum_or_constdef_member(name)) return found;
 			}
-			// const [Type] NAME = ...
-			for (sz i = 0; i + 1 < self.size; i++)
-			{
-				if (self.get(i).type != CONST) continue;
-				// const NAME = ... (no type)
-				if (self.entries[i + 1].type == CONST_IDENT && self.entries[i + 1].text == name)
-				{
-					return i + 1;
-				}
-				// const Type NAME = ... (with type)
-				if (i + 2 < self.size && is_type_token(self.entries[i + 1].type) && self.entries[i + 2].type == CONST_IDENT && self.entries[i + 2].text == name)
-				{
-					return i + 2;
-				}
-			}
-			// enum / faultdef / constdef member: enum Foo { NAME }, constdef Bar : T { NAME = v }, faultdef NAME
-			if (try found = self.find_enum_or_constdef_member(name)) return found;
 		case IDENT:
 		case AT_IDENT:
-			if (method_type.len > 0)
 			{
-				// Search for fn ... Type.method( pattern only
+				if (method_type.len > 0)
+				{
+					// Search for fn ... Type.method( pattern only
+					for (sz i = 0; i < self.size; i++)
+					{
+						if (self.get(i).type != FUNC && self.get(i).type != MACRO) continue;
+						for (sz j = i + 1; j < self.size && j < i + 64; j++)
+						{
+							if (self.entries[j].type == LPAREN)
+							{
+								if (j >= 3 && is_ident(self.entries[j - 1].type) && self.entries[j - 1].text == name && self.entries[j - 2].type == DOT && self.entries[j - 3].type == TYPE_IDENT
+									&& self.entries[j - 3].text == method_type)
+								{
+									return j - 1;
+								}
+								break;
+							}
+							if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+						}
+					}
+					return TOKEN_NOT_FOUND~;
+				}
+				// fn ... name( or macro ... name(
+				String declared_mod = "";
 				for (sz i = 0; i < self.size; i++)
 				{
+					if (self.get(i).type == MODULE)
+					{
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
+						{
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
+						}
+						declared_mod = mod_path.str_view();
+					}
 					if (self.get(i).type != FUNC && self.get(i).type != MACRO) continue;
 					for (sz j = i + 1; j < self.size && j < i + 64; j++)
 					{
 						if (self.entries[j].type == LPAREN)
 						{
-							if (j >= 3 && is_ident(self.entries[j - 1].type) && self.entries[j - 1].text == name && self.entries[j - 2].type == DOT && self.entries[j - 3].type == TYPE_IDENT
-								&& self.entries[j - 3].text == method_type)
+							if (j > 0 && is_ident(self.entries[j - 1].type) && self.entries[j - 1].text == name)
 							{
-								return j - 1;
+								if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+								{
+									return j - 1;
+								}
 							}
 							break;
 						}
 						if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
 					}
 				}
-				return TOKEN_NOT_FOUND~;
-			}
-			// fn ... name( or macro ... name(
-			for (sz i = 0; i < self.size; i++)
-			{
-				if (self.get(i).type != FUNC && self.get(i).type != MACRO) continue;
-				for (sz j = i + 1; j < self.size && j < i + 64; j++)
+				// macro name (no parens)
+				declared_mod = "";
+				for (sz i = 0; i + 1 < self.size; i++)
 				{
-					if (self.entries[j].type == LPAREN)
+					if (self.get(i).type == MODULE)
 					{
-						if (j > 0 && is_ident(self.entries[j - 1].type) && self.entries[j - 1].text == name)
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
 						{
-							return j - 1;
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
 						}
-						break;
+						declared_mod = mod_path.str_view();
 					}
-					if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
-				}
-			}
-			// macro name (no parens)
-			for (sz i = 0; i + 1 < self.size; i++)
-			{
-				if (self.get(i).type == MACRO && is_ident(self.entries[i + 1].type) && self.entries[i + 1].text == name)
-				{
-					return i + 1;
-				}
-			}
-			// type IDENT = ...
-			for (sz i = 0; i + 1 < self.size; i++)
-			{
-				if (is_type_token(self.get(i).type) && is_ident(self.entries[i + 1].type) && self.entries[i + 1].text == name)
-				{
-					if (i + 2 < self.size)
+					if (self.get(i).type == MACRO && is_ident(self.entries[i + 1].type) && self.entries[i + 1].text == name)
 					{
-						TokenType next = self.entries[i + 2].type;
-						if (next == EQ || next == EOS || next == COMMA)
+						if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
 						{
 							return i + 1;
+						}
+					}
+				}
+				// type IDENT = ...
+				declared_mod = "";
+				for (sz i = 0; i + 1 < self.size; i++)
+				{
+					if (self.get(i).type == MODULE)
+					{
+						DString mod_path = dstring::temp();
+						bool first_part = true;
+						for (sz j = i + 1; j < self.size && self.entries[j].type != EOS; j++)
+						{
+							TokenType jt = self.entries[j].type;
+							if (is_ident(jt) || jt == TYPE_IDENT || jt == CONST_IDENT)
+							{
+								if (!first_part) mod_path.append("::");
+								mod_path.append(self.entries[j].text);
+								first_part = false;
+							}
+						}
+						declared_mod = mod_path.str_view();
+					}
+					if (is_type_token(self.get(i).type) && is_ident(self.entries[i + 1].type) && self.entries[i + 1].text == name)
+					{
+						if (i + 2 < self.size)
+						{
+							TokenType next = self.entries[i + 2].type;
+							if (next == EQ || next == EOS || next == COMMA)
+							{
+								if (module_filter.len == 0 || module_path_matches(declared_mod, last_module_segment(module_filter), module_filter))
+								{
+									return i + 1;
+								}
+							}
 						}
 					}
 				}
@@ -1437,7 +1612,7 @@ fn sz? TokenList.find_declaration(&self, Token target, sz target_idx, String met
 }
 
 // Scan project directories for a declaration on disk.
-fn bool? scan_project_files(String file_path, Token target, DString* out, String method_type = "") @private
+fn bool? scan_project_files(String file_path, Token target, DString* out, String method_type = "", String module_filter = "") @private
 {
 	ProjectDirs pdirs;
 	pdirs.get_search_dirs(file_path);
@@ -1447,7 +1622,7 @@ fn bool? scan_project_files(String file_path, Token target, DString* out, String
 	{
 		DString search_path = dstring::temp();
 		search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
-		if (scan_dir_recursive(search_path.str_view(), target, out, 0, method_type))
+		if (scan_dir_recursive(search_path.str_view(), target, out, 0, method_type, module_filter))
 		{
 			return true;
 		}
@@ -1457,7 +1632,7 @@ fn bool? scan_project_files(String file_path, Token target, DString* out, String
 
 const int MAX_SCAN_DEPTH = 5;
 
-fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int depth, String method_type = "") @private
+fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int depth, String method_type = "", String module_filter = "") @private
 {
 	if (depth > MAX_SCAN_DEPTH) return false;
 
@@ -1506,7 +1681,7 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 			TokenStream* stream = file_token_stream(full_path, &owned, &content, &owns);
 			if (stream != null)
 			{
-				if (try found = stream.tokens.find_declaration_in(target, method_type))
+				if (try found = stream.tokens.find_declaration_in(target, method_type, module_filter))
 				{
 					// Build file:// URI from path
 					DString uri = dstring::temp();
@@ -1521,7 +1696,7 @@ fn bool scan_dir_recursive(String dir_path, Token target, DString* out, int dept
 		else
 		{
 			// Try to recurse into subdirectories
-			if (scan_dir_recursive(full_path, target, out, depth + 1, method_type))
+			if (scan_dir_recursive(full_path, target, out, depth + 1, method_type, module_filter))
 			{
 				return true;
 			}

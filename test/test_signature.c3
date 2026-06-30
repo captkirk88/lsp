@@ -104,3 +104,23 @@ fn void test_signature_macro() @test {
 	assert(result.contains("swap"), "got: %s", result);
 	assert(result.contains(`"parameters"`), "got: %s", result);
 }
+
+fn void test_signature_generic_function_param() @test {
+	DString out = dstring::temp();
+	String content = "fn void foo(int a, double b)<T> {}\nfoo{Bar}(1, ";
+	encode_signature_help(content, content.len, &out);
+	String result = out.str_view();
+	assert(result.contains("foo"), "got: %s", result);
+	assert(result.contains("double b"), "got: %s", result);
+	assert(result.contains(`"activeParameter":1`), "got: %s", result);
+}
+
+fn void test_signature_generic_function_generic() @test {
+	DString out = dstring::temp();
+	String content = "fn void foo(int a, double b)<T, U> {}\nfoo{Bar, ";
+	encode_signature_help(content, content.len, &out);
+	String result = out.str_view();
+	assert(result.contains("foo"), "got: %s", result);
+	assert(result.contains("U"), "got: %s", result);
+	assert(result.contains(`"activeParameter":1`), "got: %s", result);
+}

@@ -131,6 +131,18 @@ fn void test_completion_dot_partial_prefix() @test {
 	assert(!result.contains(`"label":"name"`), "field name should be filtered out by prefix, got: %s", result);
 }
 
+fn void test_completion_dot_single_char_prefix() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+	String content = "struct Foo { int x; String name; }\nfn void test() { Foo f; f.x";
+	encode_completions("", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	assert(result.contains(`"label":"x"`), "expected field x, got: %s", result);
+	assert(!result.contains(`"label":"name"`), "field name should be filtered out by prefix 'x', got: %s", result);
+}
+
+
 fn void test_completion_dot_pointer_type() @test {
 	DString out = dstring::temp();
 	DocumentList* docs = mem::new(DocumentList);

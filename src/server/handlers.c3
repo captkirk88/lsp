@@ -64,13 +64,13 @@ fn void LspServer.handle_initialize(&self, Object* msg, String id_json)
 	result.append(`"foldingRangeProvider":true,`);
 	result.append(`"documentSymbolProvider":true,`);
 	result.append(`"hoverProvider":true,`);
-	result.append(`"completionProvider":{"triggerCharacters":[".","$","@","#"]},`);
+	result.append(`"completionProvider":{"triggerCharacters":[".",":","$","@","#"]},`);
 	result.append(`"definitionProvider":true,`);
 	result.append(`"declarationProvider":true,`);
 	result.append(`"documentHighlightProvider":true,`);
 	result.append(`"referencesProvider":true,`);
 	result.append(`"renameProvider":true,`);
-	result.append(`"signatureHelpProvider":{"triggerCharacters":["(",","]}`);
+	result.append(`"signatureHelpProvider":{"triggerCharacters":["(",",","{","}"]}`);
 	result.append(`},`);
 	result.appendf(`"serverInfo":{"name":"c3-lsp","version":"%s"}}`, VERSION);
 

@@ -26,6 +26,7 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 
 	sz call_name_idx = stream.tokens.size; // sentinel = not found
 	sz active_param = 0;
+	bool is_generic_help = false;
 
 	// Find the token index at or just before the cursor. A token that *starts* exactly at the
 	// cursor offset sits to the right of the cursor (e.g. the ')' in "foo(|)") and must be
@@ -43,8 +44,9 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 		}
 	}
 
-	// Walk backwards from the cursor, tracking paren depth, to find `IDENT (` ... cursor.
-	sz depth = 0;
+	// Walk backwards from the cursor, tracking paren/brace depth, to find callee name and argument context.
+	sz paren_depth = 0;
+	sz brace_depth = 0;
 	sz comma_count = 0;
 	for (sz ii = 0; ii <= cursor_tok_idx; ii++)
 	{
@@ -52,26 +54,74 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 		TokenType tt = stream.tokens[i].type;
 		if (tt == RPAREN)
 		{
-			depth++;
+			paren_depth++;
 		}
 		else if (tt == LPAREN)
 		{
-			if (depth > 0)
+			if (paren_depth > 0)
 			{
-				depth--;
+				paren_depth--;
 			}
 			else
 			{
 				// This is the opening paren of our call.
-				if (i > 0 && is_ident(stream.tokens[i - 1].type))
+				if (i > 0 && stream.tokens[i - 1].type == RBRACE)
+				{
+					// Walk backwards to find matching LBRACE
+					sz b_depth = 1;
+					sz k = i - 2;
+					while (k > 0 && b_depth > 0)
+					{
+						if (stream.tokens[k].type == RBRACE)
+						{
+							b_depth++;
+						}
+						else if (stream.tokens[k].type == LBRACE)
+						{
+							b_depth--;
+						}
+						if (b_depth == 0) break;
+						k--;
+					}
+					if (b_depth == 0 && k > 0 && is_ident(stream.tokens[k - 1].type))
+					{
+						call_name_idx = k - 1;
+						active_param = comma_count;
+						is_generic_help = false;
+					}
+				}
+				else if (i > 0 && is_ident(stream.tokens[i - 1].type))
 				{
 					call_name_idx = i - 1;
 					active_param = comma_count;
+					is_generic_help = false;
 				}
 				break;
 			}
 		}
-		else if (tt == COMMA && depth == 0)
+		else if (tt == RBRACE)
+		{
+			brace_depth++;
+		}
+		else if (tt == LBRACE)
+		{
+			if (brace_depth > 0)
+			{
+				brace_depth--;
+			}
+			else
+			{
+				// This is the opening brace of a generic argument list of our call.
+				if (i > 0 && is_ident(stream.tokens[i - 1].type))
+				{
+					call_name_idx = i - 1;
+					active_param = comma_count;
+					is_generic_help = true;
+				}
+				break;
+			}
+		}
+		else if (tt == COMMA && paren_depth == 0 && brace_depth == 0)
 		{
 			comma_count++;
 		}
@@ -107,7 +157,7 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 
 	for (sz ci = 0; ci < mt_count; ci++)
 	{
-		if (search_signature_all(stream, target, active_param, is_method, method_types[ci], content, uri, docs, stdlib_path, out))
+		if (search_signature_all(stream, target, active_param, is_method, method_types[ci], content, uri, docs, stdlib_path, is_generic_help, out))
 		{
 			return;
 		}
@@ -116,10 +166,10 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 
 // 4-step declaration search mirroring try_find_definition, but extracting the signature
 // instead of a location. Returns true once the signature JSON is written to `out`.
-fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bool is_method, String method_type, String content, String uri, DocumentList* docs, String stdlib_path, DString* out) @private
+fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bool is_method, String method_type, String content, String uri, DocumentList* docs, String stdlib_path, bool is_generic_help, DString* out) @private
 {
 	// 1. Current file.
-	if (cur.tokens.find_signature(target, active_param, is_method, method_type, content, out)) return true;
+	if (cur.tokens.find_signature(target, active_param, is_method, method_type, content, out, is_generic_help)) return true;
 
 	// 2. Other open documents.
 	if (docs != null)
@@ -128,7 +178,7 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 		{
 			if (docs.entries[d].uri == uri) continue;
 			TokenStream* other = docs.entries[d].get_tokens();
-			if (other.tokens.find_signature(target, active_param, is_method, method_type, docs.entries[d].content, out)) return true;
+			if (other.tokens.find_signature(target, active_param, is_method, method_type, docs.entries[d].content, out, is_generic_help)) return true;
 		}
 	}
 
@@ -146,7 +196,7 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 				{
 					DString search_path = dstring::temp();
 					search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
-					if (scan_dir_for_signature(search_path.str_view(), target, active_param, is_method, method_type, out, 0)) return true;
+					if (scan_dir_for_signature(search_path.str_view(), target, active_param, is_method, method_type, is_generic_help, out, 0)) return true;
 				}
 			}
 		}
@@ -155,18 +205,18 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 	// 4. Stdlib.
 	if (stdlib_path.len > 0)
 	{
-		if (scan_dir_for_signature(stdlib_path, target, active_param, is_method, method_type, out, 0)) return true;
+		if (scan_dir_for_signature(stdlib_path, target, active_param, is_method, method_type, is_generic_help, out, 0)) return true;
 	}
 
 	return false;
 }
 
 // Find `target`'s declaration in this token list and, if found, write its signature JSON.
-fn bool TokenList.find_signature(&self, Token target, sz active_param, bool is_method, String method_type, String content, DString* out)
+fn bool TokenList.find_signature(&self, Token target, sz active_param, bool is_method, String method_type, String content, DString* out, bool is_generic_help = false)
 {
 	if (try idx = self.find_declaration_in(target, method_type))
 	{
-		return self.extract_signature_at(idx, content, active_param, is_method, out);
+		return self.extract_signature_at(idx, content, active_param, is_method, out, is_generic_help);
 	}
 	return false;
 }
@@ -175,7 +225,7 @@ fn bool TokenList.find_signature(&self, Token target, sz active_param, bool is_m
 // signatureHelp JSON. The implicit `self` receiver of a method is dropped from the
 // emitted parameter list so the active-parameter index lines up with the call's args.
 // Returns false (writing nothing) if `name_idx` is not actually a callable declaration.
-fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz active_param, bool is_method, DString* out)
+fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz active_param, bool is_method, DString* out, bool is_generic_help = false)
 {
 	// Locate the `fn`/`macro` keyword that introduces this declaration.
 	sz kw_idx = 0;
@@ -203,6 +253,7 @@ fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz ac
 	sz sig_end = sig_start;
 	sz pdepth = 0;
 	bool found_end = false;
+	sz rparen_idx = 0;
 	for (sz j = lparen_idx; j < self.size; j++)
 	{
 		TokenType t = self.entries[j].type;
@@ -213,7 +264,7 @@ fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz ac
 		else if (t == RPAREN)
 		{
 			pdepth--;
-			if (pdepth == 0) { sig_end = self.entries[j].offset + self.entries[j].len; found_end = true; break; }
+			if (pdepth == 0) { rparen_idx = j; sig_end = self.entries[j].offset + self.entries[j].len; found_end = true; break; }
 		}
 		else if (t == LBRACE || t == EOS)
 		{
@@ -223,24 +274,105 @@ fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz ac
 		}
 	}
 	if (!found_end) return false;
+
+	// Check if there is a generic parameter list `<...>` right after `)`.
+	sz less_idx = 0;
+	sz greater_idx = 0;
+	if (rparen_idx > 0)
+	{
+		for (sz j = rparen_idx + 1; j < self.size && j < rparen_idx + 8; j++)
+		{
+			if (self.entries[j].type == LESS) { less_idx = j; break; }
+			if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+		}
+		if (less_idx > 0)
+		{
+			sz gdepth = 1;
+			for (sz j = less_idx + 1; j < self.size; j++)
+			{
+				TokenType t = self.entries[j].type;
+				if (t == LESS)
+				{
+					gdepth++;
+				}
+				else if (t == GREATER)
+				{
+					gdepth--;
+					if (gdepth == 0) { greater_idx = j; sig_end = self.entries[j].offset + self.entries[j].len; break; }
+				}
+				else if (t == LBRACE || t == EOS) break;
+			}
+		}
+	}
+
 	String sig_text = content[sig_start..sig_end - 1];
 
-	// Collect parameters by splitting on top-level commas between the outermost parens.
+	// Collect parameters.
 	String[64] params;
 	sz pcount = 0;
-	sz param_start = self.entries[lparen_idx].offset + 1; // after '('
-	pdepth = 1;
-	for (sz j = lparen_idx + 1; j < self.size; j++)
+
+	if (is_generic_help)
 	{
-		TokenType t = self.entries[j].type;
-		if (t == LPAREN)
+		if (less_idx > 0 && greater_idx > 0)
 		{
-			pdepth++;
+			sz param_start = self.entries[less_idx].offset + 1; // after '<'
+			sz gdepth = 1;
+			for (sz j = less_idx + 1; j < greater_idx; j++)
+			{
+				TokenType t = self.entries[j].type;
+				if (t == LESS)
+				{
+					gdepth++;
+				}
+				else if (t == GREATER)
+				{
+					gdepth--;
+				}
+				else if (t == COMMA && gdepth == 1)
+				{
+					sz param_end = self.entries[j].offset;
+					if (param_end > param_start)
+					{
+						String pt = content[param_start..param_end - 1].trim();
+						if (pt.len > 0 && pcount < 64) params[pcount++] = pt;
+					}
+					param_start = self.entries[j].offset + 1;
+				}
+			}
+			sz param_end = self.entries[greater_idx].offset;
+			if (param_end > param_start)
+			{
+				String pt = content[param_start..param_end - 1].trim();
+				if (pt.len > 0 && pcount < 64) params[pcount++] = pt;
+			}
 		}
-		else if (t == RPAREN)
+	}
+	else
+	{
+		sz param_start = self.entries[lparen_idx].offset + 1; // after '('
+		pdepth = 1;
+		for (sz j = lparen_idx + 1; j < self.size; j++)
 		{
-			pdepth--;
-			if (pdepth == 0)
+			TokenType t = self.entries[j].type;
+			if (t == LPAREN)
+			{
+				pdepth++;
+			}
+			else if (t == RPAREN)
+			{
+				pdepth--;
+				if (pdepth == 0)
+				{
+					sz param_end = self.entries[j].offset;
+					if (param_end > param_start)
+					{
+						String pt = content[param_start..param_end - 1].trim();
+						if (pt.len > 0 && pcount < 64) params[pcount++] = pt;
+					}
+					break;
+				}
+			}
+			else if (t == COMMA && pdepth == 1)
 			{
 				sz param_end = self.entries[j].offset;
 				if (param_end > param_start)
@@ -248,24 +380,15 @@ fn bool TokenList.extract_signature_at(&self, sz name_idx, String content, sz ac
 					String pt = content[param_start..param_end - 1].trim();
 					if (pt.len > 0 && pcount < 64) params[pcount++] = pt;
 				}
-				break;
+				param_start = self.entries[j].offset + 1; // after ','
 			}
-		}
-		else if (t == COMMA && pdepth == 1)
-		{
-			sz param_end = self.entries[j].offset;
-			if (param_end > param_start)
-			{
-				String pt = content[param_start..param_end - 1].trim();
-				if (pt.len > 0 && pcount < 64) params[pcount++] = pt;
-			}
-			param_start = self.entries[j].offset + 1; // after ','
 		}
 	}
 
 	// Drop the implicit receiver of a method so activeParameter aligns with the call args.
+	// Only do this for normal parameter help, not generic help.
 	sz pstart = 0;
-	if (is_method && pcount > 0 && is_self_param(params[0])) pstart = 1;
+	if (!is_generic_help && is_method && pcount > 0 && is_self_param(params[0])) pstart = 1;
 
 	out.append(`{"signatures":[{"label":"`);
 	json_escape_into(out, sig_text);
@@ -294,7 +417,7 @@ fn bool is_self_param(String p) @private
 
 // Recursively scan a directory for `target`'s declaration; on the first match, write its
 // signature JSON (extracted from that file's content) and return true.
-fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, bool is_method, String method_type, DString* out, int depth) @private
+fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, bool is_method, String method_type, bool is_generic_help, DString* out, int depth) @private
 {
 	if (depth > MAX_SCAN_DEPTH) return false;
 
@@ -343,7 +466,7 @@ fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, b
 				// Extract into a temp buffer and copy out before freeing fc — the label and
 				// parameter strings slice directly into the file content.
 				DString local = dstring::temp();
-				bool hit = stream.tokens.find_signature(target, active_param, is_method, method_type, fc, &local);
+				bool hit = stream.tokens.find_signature(target, active_param, is_method, method_type, fc, &local, is_generic_help);
 				if (hit) out.append(local.str_view());
 				if (owns) { owned.free(); mem::free((char*)fc.ptr); }
 				if (hit) return true;
@@ -351,7 +474,7 @@ fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, b
 		}
 		else
 		{
-			if (scan_dir_for_signature(full_path, target, active_param, is_method, method_type, out, depth + 1)) return true;
+			if (scan_dir_for_signature(full_path, target, active_param, is_method, method_type, is_generic_help, out, depth + 1)) return true;
 		}
 	}
 	return false;

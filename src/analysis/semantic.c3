@@ -58,12 +58,16 @@ fn void encode_semantic_tokens(String content, DString* out, TokenStream* cached
 		SemanticCategory category = map_token_type(tok.type);
 		if (category == SKIP) continue;
 
-		// Detect function calls: IDENT immediately followed by LPAREN
+		// Detect function calls: IDENT immediately followed by LPAREN or LBRACE (generic call)
 		if (category == VARIABLE && tok.type == IDENT)
 		{
-			if (i + 1 < stream.tokens.size && stream.tokens.entries[i + 1].type == LPAREN)
+			if (i + 1 < stream.tokens.size)
 			{
-				category = FUNCTION;
+				TokenType next_t = stream.tokens.entries[i + 1].type;
+				if (next_t == LPAREN || next_t == LBRACE)
+				{
+					category = FUNCTION;
+				}
 			}
 		}
 

@@ -155,9 +155,23 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 	}
 	if (mt_count == 0) method_types[mt_count++] = "";
 
+	String module_filter = "";
+	if (!is_method)
+	{
+		String prefix = stream.tokens.resolve_module_prefix(call_name_idx);
+		if (prefix.len > 0)
+		{
+			module_filter = resolve_module_name(content, prefix);
+			if (module_filter.len == 0)
+			{
+				module_filter = prefix;
+			}
+		}
+	}
+
 	for (sz ci = 0; ci < mt_count; ci++)
 	{
-		if (search_signature_all(stream, target, active_param, is_method, method_types[ci], content, uri, docs, stdlib_path, is_generic_help, out))
+		if (search_signature_all(stream, target, active_param, is_method, method_types[ci], content, uri, docs, stdlib_path, is_generic_help, module_filter, out))
 		{
 			return;
 		}
@@ -166,10 +180,10 @@ fn void encode_signature_help(String content, sz offset, DString* out, TokenStre
 
 // 4-step declaration search mirroring try_find_definition, but extracting the signature
 // instead of a location. Returns true once the signature JSON is written to `out`.
-fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bool is_method, String method_type, String content, String uri, DocumentList* docs, String stdlib_path, bool is_generic_help, DString* out) @private
+fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bool is_method, String method_type, String content, String uri, DocumentList* docs, String stdlib_path, bool is_generic_help, String module_filter, DString* out) @private
 {
 	// 1. Current file.
-	if (cur.tokens.find_signature(target, active_param, is_method, method_type, content, out, is_generic_help)) return true;
+	if (cur.tokens.find_signature(target, active_param, is_method, method_type, content, out, is_generic_help, module_filter)) return true;
 
 	// 2. Other open documents.
 	if (docs != null)
@@ -178,7 +192,7 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 		{
 			if (docs.entries[d].uri == uri) continue;
 			TokenStream* other = docs.entries[d].get_tokens();
-			if (other.tokens.find_signature(target, active_param, is_method, method_type, docs.entries[d].content, out, is_generic_help)) return true;
+			if (other.tokens.find_signature(target, active_param, is_method, method_type, docs.entries[d].content, out, is_generic_help, module_filter)) return true;
 		}
 	}
 
@@ -196,7 +210,7 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 				{
 					DString search_path = dstring::temp();
 					search_path.appendf("%s/%s", pdirs.project_root, pdirs.dirs[i]);
-					if (scan_dir_for_signature(search_path.str_view(), target, active_param, is_method, method_type, is_generic_help, out, 0)) return true;
+					if (scan_dir_for_signature(search_path.str_view(), target, active_param, is_method, method_type, is_generic_help, module_filter, out, 0)) return true;
 				}
 			}
 		}
@@ -205,16 +219,16 @@ fn bool search_signature_all(TokenStream* cur, Token target, sz active_param, bo
 	// 4. Stdlib.
 	if (stdlib_path.len > 0)
 	{
-		if (scan_dir_for_signature(stdlib_path, target, active_param, is_method, method_type, is_generic_help, out, 0)) return true;
+		if (scan_dir_for_signature(stdlib_path, target, active_param, is_method, method_type, is_generic_help, module_filter, out, 0)) return true;
 	}
 
 	return false;
 }
 
 // Find `target`'s declaration in this token list and, if found, write its signature JSON.
-fn bool TokenList.find_signature(&self, Token target, sz active_param, bool is_method, String method_type, String content, DString* out, bool is_generic_help = false)
+fn bool TokenList.find_signature(&self, Token target, sz active_param, bool is_method, String method_type, String content, DString* out, bool is_generic_help = false, String module_filter = "")
 {
-	if (try idx = self.find_declaration_in(target, method_type))
+	if (try idx = self.find_declaration_in(target, method_type, module_filter))
 	{
 		return self.extract_signature_at(idx, content, active_param, is_method, out, is_generic_help);
 	}
@@ -417,7 +431,7 @@ fn bool is_self_param(String p) @private
 
 // Recursively scan a directory for `target`'s declaration; on the first match, write its
 // signature JSON (extracted from that file's content) and return true.
-fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, bool is_method, String method_type, bool is_generic_help, DString* out, int depth) @private
+fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, bool is_method, String method_type, bool is_generic_help, String module_filter, DString* out, int depth) @private
 {
 	if (depth > MAX_SCAN_DEPTH) return false;
 
@@ -466,7 +480,7 @@ fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, b
 				// Extract into a temp buffer and copy out before freeing fc — the label and
 				// parameter strings slice directly into the file content.
 				DString local = dstring::temp();
-				bool hit = stream.tokens.find_signature(target, active_param, is_method, method_type, fc, &local, is_generic_help);
+				bool hit = stream.tokens.find_signature(target, active_param, is_method, method_type, fc, &local, is_generic_help, module_filter);
 				if (hit) out.append(local.str_view());
 				if (owns) { owned.free(); mem::free((char*)fc.ptr); }
 				if (hit) return true;
@@ -474,7 +488,7 @@ fn bool scan_dir_for_signature(String dir_path, Token target, sz active_param, b
 		}
 		else
 		{
-			if (scan_dir_for_signature(full_path, target, active_param, is_method, method_type, is_generic_help, out, depth + 1)) return true;
+			if (scan_dir_for_signature(full_path, target, active_param, is_method, method_type, is_generic_help, module_filter, out, depth + 1)) return true;
 		}
 	}
 	return false;

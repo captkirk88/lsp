@@ -349,30 +349,45 @@ fn void emit_location(String uri, String content, Token tok, DString* out)
 }
 
 // Find the type name of a variable by scanning for TYPE_IDENT var_name or TYPE_IDENT* var_name patterns.
+// Supports generic type variable declarations like TYPE_IDENT{...} var_name.
 fn String TokenList.find_variable_type(&self, String var_name)
 {
 	for (sz i = 0; i + 1 < self.size; i++)
 	{
 		if (self.get(i).type == TYPE_IDENT)
 		{
-			// Direct: TYPE_IDENT var_name
-			if (is_ident(self.entries[i + 1].type) && self.entries[i + 1].text == var_name)
+			sz next_idx = i + 1;
+			if (next_idx < self.size && self.entries[next_idx].type == LBRACE)
 			{
-				if (i + 2 < self.size)
+				sz depth = 1;
+				next_idx++;
+				while (next_idx < self.size && depth > 0)
 				{
-					TokenType next = self.entries[i + 2].type;
+					if (self.entries[next_idx].type == LBRACE) { depth++; }
+					else if (self.entries[next_idx].type == RBRACE) { depth--; }
+					next_idx++;
+				}
+				if (depth > 0) continue;
+			}
+
+			// Direct: TYPE_IDENT{...} var_name
+			if (next_idx < self.size && is_ident(self.entries[next_idx].type) && self.entries[next_idx].text == var_name)
+			{
+				if (next_idx + 1 < self.size)
+				{
+					TokenType next = self.entries[next_idx + 1].type;
 					if (next == EOS || next == EQ || next == COMMA || next == DOT || next == RPAREN)
 					{
 						return self.get(i).text;
 					}
 				}
 			}
-			// Pointer: TYPE_IDENT* var_name
-			if (i + 2 < self.size && self.entries[i + 1].type == STAR && is_ident(self.entries[i + 2].type) && self.entries[i + 2].text == var_name)
+			// Pointer: TYPE_IDENT{...}* var_name
+			if (next_idx + 1 < self.size && self.entries[next_idx].type == STAR && is_ident(self.entries[next_idx + 1].type) && self.entries[next_idx + 1].text == var_name)
 			{
-				if (i + 3 < self.size)
+				if (next_idx + 2 < self.size)
 				{
-					TokenType next = self.entries[i + 3].type;
+					TokenType next = self.entries[next_idx + 2].type;
 					if (next == EOS || next == EQ || next == COMMA || next == DOT || next == RPAREN)
 					{
 						return self.get(i).text;
@@ -520,6 +535,30 @@ fn String TokenList.resolve_receiver_type(&self, sz cursor_idx, String uri, Docu
 		{
 			if (lparen == 0) return "";
 			sz name_idx = lparen - 1;
+			if (self.entries[name_idx].type == RBRACE)
+			{
+				// Walk backwards to find matching LBRACE
+				sz b_depth = 1;
+				sz k = name_idx - 1;
+				while (k > 0 && b_depth > 0)
+				{
+					if (self.entries[k].type == RBRACE)
+					{
+						b_depth++;
+					}
+					else if (self.entries[k].type == LBRACE)
+					{
+						b_depth--;
+					}
+					if (b_depth == 0)
+					{
+						name_idx = k - 1;
+						break;
+					}
+					k--;
+				}
+				if (b_depth > 0) return "";
+			}
 			Token callee = self.entries[name_idx];
 			if (!is_ident(callee.type)) return "";
 			if (name_idx >= 1 && self.entries[name_idx - 1].type == DOT)
@@ -604,7 +643,25 @@ fn String TokenList.find_enclosing_method_type(&self, sz offset)
 				}
 				break;
 			}
-			if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+			if (self.entries[j].type == LBRACE)
+			{
+				// Skip generic instantiation block {...}
+				sz depth = 1;
+				sz k = j + 1;
+				while (k < self.size && depth > 0)
+				{
+					if (self.entries[k].type == LBRACE) { depth++; }
+					else if (self.entries[k].type == RBRACE) { depth--; }
+					k++;
+				}
+				if (depth == 0)
+				{
+					j = k - 1;
+					continue;
+				}
+				break;
+			}
+			if (self.entries[j].type == EOS) break;
 		}
 		break;
 	}
@@ -771,7 +828,25 @@ fn String TokenList.find_function_return_type(&self, String name)
 				}
 				break;
 			}
-			if (jt == LBRACE || jt == EOS) break;
+			if (jt == LBRACE)
+			{
+				// Skip generic instantiation block {...}
+				sz depth = 1;
+				sz k = j + 1;
+				while (k < self.size && depth > 0)
+				{
+					if (self.entries[k].type == LBRACE) { depth++; }
+					else if (self.entries[k].type == RBRACE) { depth--; }
+					k++;
+				}
+				if (depth == 0)
+				{
+					j = k - 1;
+					continue;
+				}
+				break;
+			}
+			if (jt == EOS) break;
 		}
 	}
 	return "";
@@ -798,7 +873,25 @@ fn String TokenList.find_method_return_type(&self, String type_name, String meth
 				}
 				break;
 			}
-			if (jt == LBRACE || jt == EOS) break;
+			if (jt == LBRACE)
+			{
+				// Skip generic instantiation block {...}
+				sz depth = 1;
+				sz k = j + 1;
+				while (k < self.size && depth > 0)
+				{
+					if (self.entries[k].type == LBRACE) { depth++; }
+					else if (self.entries[k].type == RBRACE) { depth--; }
+					k++;
+				}
+				if (depth == 0)
+				{
+					j = k - 1;
+					continue;
+				}
+				break;
+			}
+			if (jt == EOS) break;
 		}
 	}
 	return "";
@@ -948,15 +1041,31 @@ fn String TokenList.find_struct_field_type(&self, String type_name, String field
 			}
 			if (depth == 1 && is_ident(self.entries[j].type) && self.entries[j].text == field_name)
 			{
-				// The type is the TYPE_IDENT before the field name
-				if (j > 0 && self.entries[j - 1].type == TYPE_IDENT)
+				sz prev_idx = j - 1;
+				if (prev_idx > 0 && self.entries[prev_idx].type == STAR)
 				{
-					return self.entries[j - 1].text;
+					prev_idx--;
 				}
-				// Could also be TYPE_IDENT* field (pointer)
-				if (j > 1 && self.entries[j - 1].type == STAR && self.entries[j - 2].type == TYPE_IDENT)
+				if (prev_idx > 0 && self.entries[prev_idx].type == RBRACE)
 				{
-					return self.entries[j - 2].text;
+					sz b_depth = 1;
+					sz k = prev_idx - 1;
+					while (k > 0 && b_depth > 0)
+					{
+						if (self.entries[k].type == RBRACE) { b_depth++; }
+						else if (self.entries[k].type == LBRACE) { b_depth--; }
+						if (b_depth == 0)
+						{
+							prev_idx = k - 1;
+							break;
+						}
+						k--;
+					}
+					if (b_depth > 0) continue;
+				}
+				if (prev_idx < self.size && self.entries[prev_idx].type == TYPE_IDENT)
+				{
+					return self.entries[prev_idx].text;
 				}
 			}
 		}
@@ -1498,7 +1607,25 @@ fn sz? TokenList.find_declaration(&self, Token target, sz target_idx, String met
 								}
 								break;
 							}
-							if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+							if (self.entries[j].type == LBRACE)
+							{
+								// Skip generic instantiation block {...}
+								sz depth = 1;
+								sz k = j + 1;
+								while (k < self.size && depth > 0)
+								{
+									if (self.entries[k].type == LBRACE) { depth++; }
+									else if (self.entries[k].type == RBRACE) { depth--; }
+									k++;
+								}
+								if (depth == 0)
+								{
+									j = k - 1;
+									continue;
+								}
+								break;
+							}
+							if (self.entries[j].type == EOS) break;
 						}
 					}
 					return TOKEN_NOT_FOUND~;
@@ -1537,7 +1664,25 @@ fn sz? TokenList.find_declaration(&self, Token target, sz target_idx, String met
 							}
 							break;
 						}
-						if (self.entries[j].type == LBRACE || self.entries[j].type == EOS) break;
+						if (self.entries[j].type == LBRACE)
+						{
+							// Skip generic instantiation block {...}
+							sz depth = 1;
+							sz k = j + 1;
+							while (k < self.size && depth > 0)
+							{
+								if (self.entries[k].type == LBRACE) { depth++; }
+								else if (self.entries[k].type == RBRACE) { depth--; }
+								k++;
+							}
+							if (depth == 0)
+							{
+								j = k - 1;
+								continue;
+							}
+							break;
+						}
+						if (self.entries[j].type == EOS) break;
 					}
 				}
 				// macro name (no parens)

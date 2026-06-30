@@ -87,8 +87,25 @@ fn void encode_document_symbols(String content, DString* out, TokenStream* cache
 						lparen_idx = j;
 						break;
 					}
-					// Stop on LBRACE/EOS (malformed)
-					if (stream.tokens.entries[j].type == LBRACE || stream.tokens.entries[j].type == EOS) break;
+					if (stream.tokens.entries[j].type == LBRACE)
+					{
+						// Skip generic instantiation block {...}
+						sz depth = 1;
+						sz k = j + 1;
+						while (k < stream.tokens.size && depth > 0)
+						{
+							if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+							else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+							k++;
+						}
+						if (depth == 0)
+						{
+							j = k - 1;
+							continue;
+						}
+						break;
+					}
+					if (stream.tokens.entries[j].type == EOS) break;
 				}
 				if (lparen_idx > 0 && lparen_idx > i + 1)
 				{

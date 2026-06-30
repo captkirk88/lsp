@@ -669,3 +669,49 @@ fn void test_completion_enum_members_no_leak() @test {
 	// EnumMember (kind 20) — enum members are only emitted in dot context.
 	assert(!result.contains(`"kind":20`), "enum members should not leak into non-dot completion, got: %s", result);
 }
+
+fn void test_completion_module_scope_skips_methods() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	String mod_content = "module mymod;\nstruct Config {}\nfn void Config.my_method(&self) {}\ninterface InStream { fn void my_interface_method(); }";
+	docs.open("file:///mymod.c3", mod_content, 1);
+
+	String content = "module lsp;\nimport mymod;\nfn void main() { mymod::";
+	encode_completions("file:///main.c3", content, content.len, docs, "", &out);
+	String result = out.str_view();
+	docs.close("file:///mymod.c3");
+
+	assert(result.contains(`"label":"Config"`), "expected Config struct, got: %s", result);
+	assert(!result.contains(`"label":"my_method"`), "method my_method should not appear, got: %s", result);
+	assert(!result.contains(`"label":"my_interface_method"`), "interface method my_interface_method should not appear, got: %s", result);
+}
+
+fn void test_completion_dot_on_type_name() @test {
+	DString out = dstring::temp();
+	DocumentList* docs = mem::new(DocumentList);
+	defer mem::free(docs);
+
+	// Typing a dot on a type name (like Config.) should NOT suggest instance methods/fields.
+	// But typing a dot on an enum name (like Color.) should suggest enum members.
+	String mod_content = "module mymod;\nstruct Config { int val; }\nfn void Config.my_method(&self) {}\nenum Color { RED, GREEN }";
+	docs.open("file:///mymod.c3", mod_content, 1);
+
+	// Case 1: Config.
+	String content1 = "module lsp;\nimport mymod;\nfn void main() { Config.";
+	encode_completions("file:///main.c3", content1, content1.len, docs, "", &out);
+	String result1 = out.str_view();
+	assert(!result1.contains(`"label":"val"`), "struct field should not show on type receiver, got: %s", result1);
+	assert(!result1.contains(`"label":"my_method"`), "struct method should not show on type receiver, got: %s", result1);
+
+	// Case 2: Color.
+	out.clear();
+	String content2 = "module lsp;\nimport mymod;\nfn void main() { Color.";
+	encode_completions("file:///main.c3", content2, content2.len, docs, "", &out);
+	String result2 = out.str_view();
+	assert(result2.contains(`"label":"RED"`), "expected enum member RED on type receiver, got: %s", result2);
+
+	docs.close("file:///mymod.c3");
+}
+

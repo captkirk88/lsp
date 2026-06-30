@@ -124,3 +124,24 @@ fn void test_signature_generic_function_generic() @test {
 	assert(result.contains("U"), "got: %s", result);
 	assert(result.contains(`"activeParameter":1`), "got: %s", result);
 }
+
+fn void test_signature_module_qualification() @test {
+	DString out = dstring::temp();
+	DocumentList* ds = mem::new(DocumentList);
+	defer mem::free(ds);
+
+	ds.open("file:///bar.c3", "module bar;\nfn void get(double x) {}", 1);
+	String content = "import foo;\nimport bar;\nfn void test() {\n\tfoo::get{int}(\n}";
+	ds.open("file:///test.c3", content, 1);
+	ds.open("file:///foo.c3", "module foo;\nfn void get(int x) {}", 1);
+
+	encode_signature_help(content, 56, &out, uri: "file:///test.c3", docs: ds);
+	String result = out.str_view();
+	assert(result.contains("int x"), "got: %s", result);
+	assert(!result.contains("double x"), "got: %s", result);
+
+	ds.close("file:///bar.c3");
+	ds.close("file:///foo.c3");
+	ds.close("file:///test.c3");
+}
+

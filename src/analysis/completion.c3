@@ -491,7 +491,25 @@ fn void collect_declarations_from_content(String content, String prefix, DString
 						}
 						break;
 					}
-					if (stream.tokens.entries[j].type == LBRACE || stream.tokens.entries[j].type == EOS) break;
+					if (stream.tokens.entries[j].type == LBRACE)
+					{
+						// Skip generic instantiation block {...}
+						sz depth = 1;
+						sz k = j + 1;
+						while (k < stream.tokens.size && depth > 0)
+						{
+							if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+							else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+							k++;
+						}
+						if (depth == 0)
+						{
+							j = k - 1;
+							continue;
+						}
+						break;
+					}
+					if (stream.tokens.entries[j].type == EOS) break;
 				}
 				// macro name (no parens)
 				if (name.len == 0 && tt == MACRO && i + 1 < stream.tokens.size && is_ident(stream.tokens.entries[i + 1].type))
@@ -508,12 +526,54 @@ fn void collect_declarations_from_content(String content, String prefix, DString
 					name = stream.tokens.entries[i + 1].text;
 					kind = 22; // Struct
 				}
+				// Skip the body of the struct/interface
+				for (sz j = i + 1; j < stream.tokens.size; j++)
+				{
+					if (stream.tokens.entries[j].type == LBRACE)
+					{
+						sz depth = 1;
+						sz k = j + 1;
+						while (k < stream.tokens.size && depth > 0)
+						{
+							if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+							else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+							k++;
+						}
+						if (depth == 0)
+						{
+							i = k - 1;
+						}
+						break;
+					}
+					if (stream.tokens.entries[j].type == EOS) break;
+				}
 			case ENUM:
 			case FAULTDEF:
 				if (i + 1 < stream.tokens.size && stream.tokens.entries[i + 1].type == TYPE_IDENT)
 				{
 					name = stream.tokens.entries[i + 1].text;
 					kind = 13; // Enum
+				}
+				// Skip the body of the enum/faultdef
+				for (sz j = i + 1; j < stream.tokens.size; j++)
+				{
+					if (stream.tokens.entries[j].type == LBRACE)
+					{
+						sz depth = 1;
+						sz k = j + 1;
+						while (k < stream.tokens.size && depth > 0)
+						{
+							if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+							else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+							k++;
+						}
+						if (depth == 0)
+						{
+							i = k - 1;
+						}
+						break;
+					}
+					if (stream.tokens.entries[j].type == EOS) break;
 				}
 			case ALIAS:
 				if (i + 1 < stream.tokens.size && stream.tokens.entries[i + 1].type == TYPE_IDENT)
@@ -832,6 +892,32 @@ fn void collect_callable_names(TokenStream* stream, String[MAX_DOC_IDENTS]* name
 	for (sz i = 0; i < stream.tokens.size; i++)
 	{
 		TokenType tt = stream.tokens.entries[i].type;
+		if (tt == STRUCT || tt == BITSTRUCT || tt == UNION || tt == INTERFACE || tt == ENUM || tt == FAULTDEF)
+		{
+			// Skip body
+			for (sz j = i + 1; j < stream.tokens.size; j++)
+			{
+				if (stream.tokens.entries[j].type == LBRACE)
+				{
+					sz depth = 1;
+					sz k = j + 1;
+					while (k < stream.tokens.size && depth > 0)
+					{
+						if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+						else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+						k++;
+					}
+					if (depth == 0)
+					{
+						i = k - 1;
+					}
+					break;
+				}
+				if (stream.tokens.entries[j].type == EOS) break;
+			}
+			continue;
+		}
+
 		if (tt != FUNC && tt != MACRO) continue;
 
 		String name = "";
@@ -846,7 +932,25 @@ fn void collect_callable_names(TokenStream* stream, String[MAX_DOC_IDENTS]* name
 				}
 				break;
 			}
-			if (stream.tokens.entries[j].type == LBRACE || stream.tokens.entries[j].type == EOS) break;
+			if (stream.tokens.entries[j].type == LBRACE)
+			{
+				// Skip generic instantiation block {...}
+				sz depth = 1;
+				sz k = j + 1;
+				while (k < stream.tokens.size && depth > 0)
+				{
+					if (stream.tokens.entries[k].type == LBRACE) { depth++; }
+					else if (stream.tokens.entries[k].type == RBRACE) { depth--; }
+					k++;
+				}
+				if (depth == 0)
+				{
+					j = k - 1;
+					continue;
+				}
+				break;
+			}
+			if (stream.tokens.entries[j].type == EOS) break;
 		}
 		// macro name (no parens)
 		if (name.len == 0 && tt == MACRO && i + 1 < stream.tokens.size && is_ident(stream.tokens.entries[i + 1].type))
@@ -1000,23 +1104,32 @@ fn void collect_dot_completions(String uri, String content, sz offset, DocumentL
 	String[MAX_DOC_IDENTS] seen;
 	sz seen_count = 0;
 
-	// Collect struct fields (use resolved alias for struct lookup)
-	collect_struct_fields(struct_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
-	// Also try unresolved name for struct fields
-	if (struct_type != recv_type)
+	bool is_type_receiver = false;
+	if (cursor_idx >= 2)
 	{
-		collect_struct_fields(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		is_type_receiver = stream.tokens.entries[cursor_idx - 2].type == TYPE_IDENT;
 	}
 
-	// Collect methods (try original alias name first, then resolved)
-	collect_type_methods(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
-	if (resolved_type.len > 0 && resolved_type != recv_type)
+	if (!is_type_receiver)
 	{
-		collect_type_methods(resolved_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		// Collect struct fields (use resolved alias for struct lookup)
+		collect_struct_fields(struct_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		// Also try unresolved name for struct fields
+		if (struct_type != recv_type)
+		{
+			collect_struct_fields(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		}
+
+		// Collect methods (try original alias name first, then resolved)
+		collect_type_methods(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		if (resolved_type.len > 0 && resolved_type != recv_type)
+		{
+			collect_type_methods(resolved_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+		}
 	}
 
 	// Collect enum members (Type.MEMBER) — for an enum/faultdef receiver
-	collect_enum_members(recv_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
+	collect_enum_members(struct_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
 	if (resolved_type.len > 0 && resolved_type != recv_type)
 	{
 		collect_enum_members(resolved_type, uri, content, docs, stdlib_path, prefix, out, first, &seen, &seen_count);
